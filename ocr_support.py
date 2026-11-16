@@ -2,7 +2,7 @@
 import os
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 from verdant.config import RESOURCES_DIR
 
 

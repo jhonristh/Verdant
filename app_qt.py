@@ -6,7 +6,7 @@ from collections import OrderedDict
 from html import escape
 from pathlib import Path
 
-import fitz
+import pymupdf as fitz
 from PySide6.QtCore import Qt, QSettings, QThread, Signal, QPoint, QPointF, QBuffer, QIODevice
 from PySide6.QtGui import QAction, QColor, QFont, QImage, QKeySequence, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtPdf import QPdfDocument
@@ -1669,8 +1669,12 @@ class Workbench(QMainWindow):
         self.statusBar().showMessage(f"Exported {path}", 6000)
 
 
-if __name__ == "__main__":
+def main():
     application = QApplication(sys.argv)
     application.setStyleSheet(STYLE)
     window = Workbench(); window.show()
-    sys.exit(application.exec())
+    return application.exec()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

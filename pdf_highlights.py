@@ -1,7 +1,7 @@
 """Locate every occurrence of the selected rubric item's terms on a PDF page."""
 import re
 
-import fitz
+import pymupdf as fitz
 
 
 def word_rects(page, term):
