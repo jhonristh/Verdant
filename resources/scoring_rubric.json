@@ -1,0 +1,39 @@
+{
+  "version": "Workbook revised scoring (SDG 1/2/3)",
+  "sdg_weights": {"Identified": 1, "Managed": 2, "Reported": 3},
+  "esg": [
+    {"id":"E1","pillar":"Environmental","title":"Environmental compliance risks or costs","keywords":["environmental compliance","ECC","DENR","fines","penalties","remediation","environmental provision"]},
+    {"id":"E2","pillar":"Environmental","title":"Energy cost or energy supply risk","keywords":["energy cost","electricity cost","fuel cost","power supply","energy price"]},
+    {"id":"E3","pillar":"Environmental","title":"Carbon pricing or emissions-regulation risk/cost","keywords":["carbon tax","carbon price","emissions regulation","Clean Air Act","compliance cost"]},
+    {"id":"E4","pillar":"Environmental","title":"Climate-related risks and financial effect/management","keywords":["climate risk","physical risk","transition risk","typhoon","flood","scenario analysis","TCFD"]},
+    {"id":"E5","pillar":"Environmental","title":"Waste disposal costs, penalties or liabilities","keywords":["waste disposal cost","hazardous waste","RA 9003","RA 6969","waste penalties"]},
+    {"id":"E6","pillar":"Environmental","title":"Water-related risks or water cost","keywords":["water risk","water scarcity","water cost","drought","water supply"]},
+    {"id":"E7","pillar":"Environmental","title":"Environmental risk in enterprise risk management","keywords":["enterprise risk management","ERM","risk register","environmental risk","risk rating"]},
+    {"id":"E8","pillar":"Environmental","title":"External assurance of environmental data","keywords":["assurance","third-party verification","independent verification","external audit","ISAE"]},
+    {"id":"E9","pillar":"Environmental","title":"Investment reducing environmental risk or cost","keywords":["capital expenditure","capex","investment","energy efficiency","solar","pollution control"]},
+    {"id":"E10","pillar":"Environmental","title":"Environmental policy or management system","keywords":["environmental policy","environmental management system","EMS","ISO 14001"]},
+    {"id":"S1","pillar":"Social","title":"Labor-related risks or costs","keywords":["labor dispute","strike","collective bargaining","wage","employee benefits cost"]},
+    {"id":"S2","pillar":"Social","title":"Workplace safety risks or costs","keywords":["lost time injury","LTIFR","accident","safety cost","compensation","insurance","downtime"]},
+    {"id":"S3","pillar":"Social","title":"Training costs or skills-shortage risk","keywords":["training expense","training cost","skills gap","talent shortage"]},
+    {"id":"S4","pillar":"Social","title":"Community risks or community-program budget","keywords":["community risk","social license","community opposition","community budget","CSR spending"]},
+    {"id":"S5","pillar":"Social","title":"Supply-chain risks","keywords":["supply chain risk","supply disruption","supplier concentration","key suppliers"]},
+    {"id":"S6","pillar":"Social","title":"Discrimination legal risk or talent-attraction risk","keywords":["discrimination","labor case","talent attraction","gender","diversity risk"]},
+    {"id":"S7","pillar":"Social","title":"Human-rights or labor-law compliance risks","keywords":["human rights","labor law","DOLE","child labor","violations","penalties"]},
+    {"id":"S8","pillar":"Social","title":"Employee turnover or retention risk","keywords":["turnover rate","attrition","retention","hiring cost","replacement cost"]},
+    {"id":"S9","pillar":"Social","title":"Occupational health and safety management system/program","keywords":["OHS management system","ISO 45001","safety program","safety committee"]},
+    {"id":"S10","pillar":"Social","title":"Anti-discrimination and anti-harassment policy/training","keywords":["anti-harassment","anti-discrimination","code of conduct","Safe Spaces Act","policy training"]},
+    {"id":"G1","pillar":"Governance","title":"Board oversight of ESG risks","keywords":["board oversight","sustainability committee","ESG risk","board-level"]},
+    {"id":"G2","pillar":"Governance","title":"Board qualifications, skills or expertise","keywords":["board of directors","qualifications","expertise","skills","experience"]},
+    {"id":"G3","pillar":"Governance","title":"Bribery/corruption risk, incidents or costs","keywords":["anti-corruption","bribery","ethics","incidents","fines"]},
+    {"id":"G4","pillar":"Governance","title":"Whistleblowing reports or fraud losses","keywords":["whistleblower","hotline","reports received","fraud","investigated"]},
+    {"id":"G5","pillar":"Governance","title":"Executive pay linked to ESG/sustainability","keywords":["executive compensation","remuneration","ESG-linked","KPI","incentive"]},
+    {"id":"G6","pillar":"Governance","title":"Risk management committee","keywords":["risk committee","risk oversight committee","risk management"]},
+    {"id":"G7","pillar":"Governance","title":"Regulatory compliance risks, penalties or cases","keywords":["legal proceedings","penalties","non-compliance","litigation","sanctions"]},
+    {"id":"G8","pillar":"Governance","title":"Independent audit committee","keywords":["audit committee","independent directors","audit committee chair"]},
+    {"id":"G9","pillar":"Governance","title":"Board diversity/independence policy and composition","keywords":["board diversity policy","independent directors","gender diversity","board composition"]},
+    {"id":"G10","pillar":"Governance","title":"Anti-corruption policy and employee training","keywords":["anti-corruption policy","code of business conduct","gifts policy","ethics training"]}
+  ],
+  "sdgs": [
+    [1,"No Poverty","poverty,livelihood,low-income"],[2,"Zero Hunger","hunger,food security,nutrition"],[3,"Good Health and Well-Being","health and safety,wellness,health programs"],[4,"Quality Education","education,scholarship,training,skills"],[5,"Gender Equality","gender,women,equal opportunity"],[6,"Clean Water and Sanitation","water,wastewater,sanitation,effluent"],[7,"Affordable and Clean Energy","renewable energy,solar,energy efficiency"],[8,"Decent Work and Economic Growth","jobs,employment,wages,labor standards"],[9,"Industry, Innovation and Infrastructure","innovation,infrastructure,R&D,technology"],[10,"Reduced Inequalities","inclusion,inequality,PWD,indigenous"],[11,"Sustainable Cities and Communities","community,housing,disaster resilience"],[12,"Responsible Consumption and Production","waste,recycling,resource efficiency"],[13,"Climate Action","climate,GHG,emissions,carbon,net zero"],[14,"Life Below Water","marine,ocean,coastal,water pollution"],[15,"Life on Land","biodiversity,forest,reforestation,tree planting"],[16,"Peace, Justice and Strong Institutions","ethics,anti-corruption,transparency,human rights"],[17,"Partnerships for the Goals","partnership,collaboration,NGO,alliance"]
+  ]
+}
