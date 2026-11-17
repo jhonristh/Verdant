@@ -21,6 +21,7 @@ from verdant.config import RESOURCES_DIR
 from scoring_assist import assess_all
 from ocr_support import extract_missing_pages, find_tessdata, parse_page_numbers
 from pdf_highlights import keyword_rects
+from verdant.services.master_export import export_master_workbook
 
 
 STYLE = """
@@ -275,6 +276,7 @@ class Workbench(QMainWindow):
         work_menu.addAction("Add PDFs", self.import_pdfs)
         work_menu.addAction("Check for score", self.check_for_score)
         work_menu.addSeparator(); work_menu.addAction("Export Excel", self.export_excel)
+        work_menu.addAction("Export for master workbook", self.export_for_master_workbook)
 
         self.work_menu_button = QToolButton()
         self.work_menu_button.setText("Workpaper ▾")
@@ -297,6 +299,7 @@ class Workbench(QMainWindow):
         row.addWidget(self.button("Add PDFs", self.import_pdfs))
         row.addWidget(self.button("Check for score", self.check_for_score))
         row.addWidget(self.button("Export Excel", self.export_excel))
+        row.addWidget(self.button("Export for master workbook", self.export_for_master_workbook))
         self.controls_panel = controls
         layout.addWidget(controls)
 
@@ -1666,6 +1669,16 @@ class Workbench(QMainWindow):
             sheet.column_dimensions[column].width = width
         try: workbook.save(path)
         except OSError as exc: return QMessageBox.critical(self, "Export failed", str(exc))
+        self.statusBar().showMessage(f"Exported {path}", 6000)
+
+    def export_for_master_workbook(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export for master workbook",
+            "Verdant_Master_Export.xlsx", "Excel (*.xlsx)")
+        if not path: return
+        try:
+            export_master_workbook(self.store, path)
+        except Exception as exc:
+            return QMessageBox.critical(self, "Master export failed", str(exc))
         self.statusBar().showMessage(f"Exported {path}", 6000)
 
 
