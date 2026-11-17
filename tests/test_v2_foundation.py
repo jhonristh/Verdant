@@ -165,7 +165,7 @@ class FoundationTests(unittest.TestCase):
             rows=list(csv.DictReader(stream))
         self.assertEqual(next(row for row in rows if row["item_id"]=="E1")["manual_score"],"1")
         self.window.review_toggle.setChecked(True)
-        self.assertIn("Lead found",self.window.score_hint.text())
+        self.assertIn("LEAD FOUND",self.window.score_hint.text())
         self.assertEqual(self.window.reviewed_tile.bar.value(),0)
         self.window.apply_prediction()
         self.assertTrue(self.window.found.isChecked())

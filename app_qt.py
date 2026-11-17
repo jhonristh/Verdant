@@ -23,7 +23,7 @@ from scoring_assist import assess_all
 from ocr_support import extract_missing_pages, find_tessdata, parse_page_numbers
 from pdf_highlights import keyword_rects
 from verdant.services.master_export import export_master_workbook
-from verdant.services.template_export import export_general_workbook
+from verdant.services.workspace_export import export_workspace_workbook
 from verdant.domain.rubric import build_items
 from verdant.services.workpaper_transfer import export_workpaper, import_workpaper
 
@@ -50,7 +50,15 @@ QLabel#warn { background:#3a2f12; border:1px solid #8a6d1f; border-radius:8px; p
 QFrame#ocrWarning { background:#302811; border:1px solid #806823; border-radius:8px; }
 QFrame#ocrDetailsPopup { background:#17241e; border:1px solid #507860; border-radius:8px; }
 QLabel#hint { color:#f3d38a; font-size:12px; }
-QLabel#prediction { background:#203b2b; border:1px solid #4e9a67; border-radius:8px; padding:10px; color:#f2fbf5; font-size:14px; }
+QLabel#prediction { background:#203b2b; border:2px solid #4e9a67; border-radius:8px; padding:14px; color:#f2fbf5; font-size:15px; font-weight:600; }
+QLabel#prediction[state="lead"] { background:#17452d; border-color:#71d69a; color:#f2fff6; }
+QLabel#prediction[state="weak"] { background:#433512; border-color:#e6bd52; color:#fff3d3; }
+QLabel#prediction[state="nohit"] { background:#3b2523; border-color:#d98b76; color:#fff0ea; }
+QLabel#prediction[state="idle"] { background:#203b2b; border-color:#4e9a67; color:#f2fbf5; }
+QLabel#decisionState { border-radius:7px; padding:8px 12px; font-size:14px; font-weight:700; }
+QLabel#decisionState[state="open"] { background:#27362e; color:#dcebe1; border:1px solid #5b7a66; }
+QLabel#decisionState[state="supported"] { background:#17452d; color:#c9f5d7; border:1px solid #71d69a; }
+QLabel#decisionState[state="unsupported"] { background:#493419; color:#ffe7b0; border:1px solid #d7a850; }
 QLabel#empty { color:#a9bbb0; font-size:16px; }
 QLabel#chip { border-radius:12px; padding:4px 14px; font-weight:700; font-size:12px; }
 QLabel#chip[state="none"] { background:#26332c; color:#a9bbb0; border:1px solid #3c5847; }
@@ -125,7 +133,7 @@ WORKPAPER_HELP = {
     "Import workpaper (.verdant)": "Merge a shared workpaper after reviewing any decision conflicts.",
     "Find leads": "Search reports for rule-based evidence leads; only saved review decisions count as scores.",
     "Mark items with no hits as Not found": "Confirm bulk Not found decisions for unreviewed items with no extracted-text hits.",
-    "Export sheets": "Create one new XLSX using the consolidated workbook template and all saved workpapers.",
+    "Export sheets": "Export the open company and fiscal year as one XLSX with summary, decisions, evidence pins, and leads.",
     "Help for these actions": "Open a popup explaining each workpaper action and button.",
 }
 
@@ -155,6 +163,8 @@ BUTTON_HELP = {
     "Use lead": "Fill the decision form with the best lead; inspect the source before saving.",
     "Save and next": "Save this decision and move to the next unreviewed item (Alt+Right).",
     "Next with a lead": "Jump to the next unreviewed item that has a lead.",
+    "Previous item": "Show the previous scoring item without saving. Unsaved changes prompt you first.",
+    "Next item": "Show the next scoring item without saving. Unsaved changes prompt you first.",
     "Score summary": "Open a detailed list of rule-based leads and saved decisions.",
     "Expand all": "Expand every score group.",
     "Collapse all": "Collapse every score group.",
@@ -824,6 +834,9 @@ class Workbench(QMainWindow):
         rl.addWidget(self.stage_box)
         self.prediction = QLabel("Run Find leads to see a source passage.")
         self.prediction.setObjectName("prediction"); self.prediction.setWordWrap(True); rl.addWidget(self.prediction)
+        self.decision_state = QLabel("DECISION: NOT REVIEWED")
+        self.decision_state.setObjectName("decisionState"); self.decision_state.setProperty("state", "open")
+        rl.addWidget(self.decision_state)
         self.review_toggle = self.button("Hide manual review", lambda: None)
         self.review_toggle.setCheckable(True); self.review_toggle.setChecked(True)
         rl.addWidget(self.review_toggle)
@@ -854,6 +867,12 @@ class Workbench(QMainWindow):
         form.addWidget(self.evidence, 1)
         self.validation = QLabel(); self.validation.setObjectName("hint"); self.validation.setWordWrap(True); form.addWidget(self.validation)
         self.save_button = self.button("Save and next", self.save_and_next, True); form.addWidget(self.save_button)
+        navigation = QHBoxLayout()
+        self.previous_item_button = self.button("Previous item", self.previous_item)
+        self.next_item_button = self.button("Next item", self.next_item)
+        navigation.addWidget(self.previous_item_button)
+        navigation.addWidget(self.next_item_button)
+        form.addLayout(navigation)
         form.addWidget(self.button("Next with a lead", self.next_with_lead))
         rl.addWidget(self.manual_box, 1)
         self.review_toggle.toggled.connect(self.toggle_manual_review)
@@ -1038,9 +1057,14 @@ class Workbench(QMainWindow):
                 marker = MARKS["supported" if supported else "unsupported"]; state = "supported" if supported else "reviewed, not supported"
             else: marker = MARKS["open"]; state = "not reviewed"
             lead = self.suggestions.get(item["id"])
-            lead_text = f"  ·  proposed {lead['suggestion']}" if lead and item["id"] not in scores else ""
+            if lead and item["id"] not in scores:
+                lead_text = "  ·  LEAD" if lead["suggestion"] else "  ·  REVIEW HIT" if lead["hits"] else "  ·  NO TEXT HIT"
+            else:
+                lead_text = ""
             row = QListWidgetItem(f"{marker}  {item['id']}  {item['title']}{lead_text}")
             if item["id"] in scores and scores[item["id"]][0] == 1: row.setForeground(QColor("#8fe0b0"))
+            elif lead and item["id"] not in scores and lead["suggestion"]: row.setForeground(QColor("#9ce9ba"))
+            elif lead and item["id"] not in scores: row.setForeground(QColor("#f3d38a"))
             elif item["id"] not in scores: row.setForeground(QColor("#edf4ef"))
             else: row.setForeground(QColor("#a9bbb0"))
             row.setToolTip(f"{item['id']} \u2014 {item['title']} ({state})" + (f"; {lead['label']}" if lead else ""))
@@ -1065,8 +1089,12 @@ class Workbench(QMainWindow):
             self.render_items(); return False
         self.loading_form = True
         self.current = item
+        position = next(index for index, candidate in enumerate(self.items) if candidate["id"] == item["id"])
+        self.previous_item_button.setEnabled(position > 0)
+        self.next_item_button.setEnabled(position < len(self.items) - 1)
         scores = self.all_scores()
         saved = scores.get(item["id"])
+        self.update_decision_status(saved)
         self.item_title.setText(f"{item['id']}  {item['title']}")
         self.criterion.setText(f"{item['id']} \u00b7 {item['title']}")
         terms_text = "Search terms: " + ", ".join(item["keywords"])
@@ -1100,13 +1128,27 @@ class Workbench(QMainWindow):
 
     def update_prediction(self, item):
         lead = self.suggestions.get(item["id"])
-        self.score_hint.setText((lead["label"] + ". " + lead["reason"]) if lead else "Import PDFs, then click Find leads.")
         if lead:
             best = lead["hits"][0] if lead["hits"] else None
-            source = f"\nBest hit: {best['document']}, PDF p. {best['page']}" if best else "\nNo matching extractable passage"
-            self.prediction.setText(f"{lead['label']}  ·  evidence lead only\n{lead['reason']}{source}")
-        else: self.prediction.setText("Run Find leads to see a source passage.")
+            state = "lead" if lead["suggestion"] else "weak" if best else "nohit"
+            title = "LEAD FOUND" if state == "lead" else "HIT NEEDS REVIEW" if state == "weak" else "NO TEXT HIT"
+            source = f"Best hit: {best['document']}, PDF p. {best['page']}" if best else "No matching extractable passage. Check OCR and synonyms."
+            self.prediction.setText(f"{title}  ·  Suggested lead, not a saved decision\n{lead['reason']}\n{source}")
+            self.score_hint.setText(f"{title} · {lead['reason']}")
+        else:
+            state = "idle"
+            self.prediction.setText("Run Find leads to see a source passage.")
+            self.score_hint.setText("Import PDFs, then click Find leads.")
+        self.prediction.setProperty("state", state)
+        self.prediction.style().unpolish(self.prediction); self.prediction.style().polish(self.prediction)
         self.apply_prediction_button.setEnabled(bool(lead and self.project_id))
+
+    def update_decision_status(self, saved):
+        state = "open" if saved is None else "supported" if saved[0] else "unsupported"
+        label = {"open": "NOT REVIEWED", "supported": "SUPPORTED (1)", "unsupported": "NOT SUPPORTED (0)"}[state]
+        self.decision_state.setText(f"SAVED DECISION: {label}" if saved is not None else f"DECISION: {label}")
+        self.decision_state.setProperty("state", state)
+        self.decision_state.style().unpolish(self.decision_state); self.decision_state.style().polish(self.decision_state)
 
     def form_state(self):
         return (self.found.isChecked(), self.absent.isChecked(), self.doc_name.text(),
@@ -2011,6 +2053,7 @@ class Workbench(QMainWindow):
             self.store.save_score(self.project_id, code_later, 0, old[1], old[2], old[3], printed_pages=printed)
         self.store.save_score(self.project_id, code, score, excerpt or None, document or None, pages or None,
                               printed_pages=self.printed_pages.text().strip())
+        self.update_decision_status((score,))
         self.saved_form = self.form_state()
         self.refresh_totals(); self.render_items(); self.select_item_refresh()
         self.statusBar().showMessage(f"Saved {code} \u00b7 score {score}" + (f" \u00b7 cleared {', '.join(cascade)}" if cascade else ""), 4000)
@@ -2037,7 +2080,7 @@ class Workbench(QMainWindow):
 
     def next_unreviewed(self):
         scores = self.all_scores()
-        start = self.items.index(self.current)
+        start = next(index for index, item in enumerate(self.items) if item["id"] == self.current["id"])
         for offset in range(1, len(self.items) + 1):
             item = self.items[(start + offset) % len(self.items)]
             if item["id"] not in scores:
@@ -2046,7 +2089,7 @@ class Workbench(QMainWindow):
 
     def next_with_lead(self):
         scores = self.all_scores()
-        start = self.items.index(self.current)
+        start = next(index for index, item in enumerate(self.items) if item["id"] == self.current["id"])
         for offset in range(1, len(self.items) + 1):
             item = self.items[(start + offset) % len(self.items)]
             if item["id"] not in scores and self.suggestions.get(item["id"], {}).get("suggestion") == 1:
@@ -2074,8 +2117,12 @@ class Workbench(QMainWindow):
         self.statusBar().showMessage(f"Marked {len(targets)} items Not found with bulk audit tags.", 8000)
 
     def next_item(self):
-        index = self.items.index(self.current)
+        index = next(index for index, item in enumerate(self.items) if item["id"] == self.current["id"])
         if index + 1 < len(self.items): self.select_item(self.items[index + 1])
+
+    def previous_item(self):
+        index = next(index for index, item in enumerate(self.items) if item["id"] == self.current["id"])
+        if index > 0: self.select_item(self.items[index - 1])
 
     def refresh_totals(self):
         scores = self.all_scores()
@@ -2178,15 +2225,19 @@ class Workbench(QMainWindow):
             self.store.set_setting("evidence_page_type", page_type)
 
     def export_sheets(self):
-        path, _ = QFileDialog.getSaveFileName(self, "Export consolidated sheets",
-            "Verdant_Consolidated_Scores.xlsx", "Excel (*.xlsx)")
+        if not self.project_id:
+            return QMessageBox.warning(self, "Open workpaper", "Open a company and fiscal year before exporting.")
+        company = re.sub(r'[^\w.-]+', '_', self.active_company or self.company.currentText()).strip('_')
+        year = re.sub(r'[^\w.-]+', '_', self.active_year or self.year.currentText()).strip('_')
+        path, _ = QFileDialog.getSaveFileName(self, "Export current workpaper",
+            f"{company}_{year}_Verdant.xlsx", "Excel (*.xlsx)")
         if not path:
             return
         try:
-            output = export_general_workbook(self.store, path)
+            output = export_workspace_workbook(self.store, self.project_id, self.items, path)
         except Exception as exc:
             return QMessageBox.critical(self, "Export failed", str(exc))
-        self.statusBar().showMessage(f"Exported consolidated workbook: {output}", 8000)
+        self.statusBar().showMessage(f"Exported workpaper: {output}", 8000)
 
     def export_excel(self):
         if not self.project_id: return QMessageBox.warning(self, "Open workpaper", "Open a workpaper first.")

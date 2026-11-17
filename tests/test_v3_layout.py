@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import fitz
+from openpyxl import load_workbook
 from PySide6.QtCore import Qt, QSettings, QByteArray
 from PySide6.QtPdfWidgets import QPdfView
 from PySide6.QtWidgets import QApplication
@@ -414,12 +415,42 @@ class V3LayoutTests(unittest.TestCase):
         self.assertIn("Export sheets", actions)
         self.assertNotIn("Export Excel", actions)
         self.assertNotIn("Export for master workbook", actions)
+        self.window.project_id = self.window.store.project("Test PLC", "2022")
+        self.window.active_company = "Test PLC"
+        self.window.active_year = "2022"
         output = Path(self.temp.name) / "general.xlsx"
         with patch.object(app_qt.QFileDialog, "getSaveFileName", return_value=(str(output), "Excel (*.xlsx)")):
             self.window.export_sheets()
         self.assertTrue(output.exists())
-        with output.open("rb") as stream:
-            self.assertEqual(stream.read(2), b"PK")
+        book = load_workbook(output, read_only=True)
+        self.assertEqual(book.sheetnames, ["Summary", "Decisions", "Evidence pins"])
+        self.assertEqual(book["Summary"]["B2"].value, "Test PLC")
+        self.assertEqual(book["Decisions"].max_row, 82)
+        book.close()
+
+    def test_lead_result_states_and_checklist_navigation(self):
+        self.window.project_id = self.window.store.project("Test PLC", "2022")
+        first, second = self.window.items[:2]
+        self.window.suggestions[first["id"]] = {"suggestion": 0, "hits": [],
+            "label": "No lead", "reason": "No rubric keyword in extracted text.", "confidence": "low"}
+        self.window.update_prediction(first)
+        self.assertEqual(self.window.prediction.property("state"), "nohit")
+        self.assertIn("NO TEXT HIT", self.window.prediction.text())
+        self.window.suggestions[first["id"]] = {"suggestion": 1, "hits": [{"document": "annual.pdf", "page": 3}],
+            "label": "Lead found", "reason": "Company-specific passage.", "confidence": "high"}
+        self.window.update_prediction(first)
+        self.assertEqual(self.window.prediction.property("state"), "lead")
+        self.assertIn("not a saved decision", self.window.prediction.text())
+        self.window.update_decision_status(None)
+        self.assertEqual(self.window.decision_state.property("state"), "open")
+        self.window.update_decision_status((0,))
+        self.assertIn("NOT SUPPORTED", self.window.decision_state.text())
+        self.window.update_decision_status((1,))
+        self.assertIn("SUPPORTED (1)", self.window.decision_state.text())
+        self.window.next_item()
+        self.assertEqual(self.window.current["id"], second["id"])
+        self.window.previous_item()
+        self.assertEqual(self.window.current["id"], first["id"])
 
 
 if __name__ == "__main__":
