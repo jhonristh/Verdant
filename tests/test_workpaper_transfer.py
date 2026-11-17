@@ -34,7 +34,7 @@ class WorkpaperTransferTests(unittest.TestCase):
             target = result["project_id"]
             self.assertEqual(second.scores(target), first.scores(project))
             self.assertEqual(second.ocr_text(target, moved_report, digest), {1: "Recognized text"})
-            self.assertEqual(Path(second.reports(target)[0][0]), moved_report)
+            self.assertEqual(Path(second.reports(target)[0][0]).resolve(), moved_report.resolve())
             self.assertEqual(second.db.execute("SELECT COUNT(*) FROM audit_log").fetchone()[0], 2)
 
             second.save_score(target, "E1", 0, "", "", "")

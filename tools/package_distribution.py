@@ -191,8 +191,12 @@ def build():
     release_docs = OUTPUT / "Documentation"
     release_docs.mkdir(exist_ok=True)
     for pdf in DOCS.glob("*.pdf"):
-        shutil.copy2(pdf, release_docs / pdf.name)
-    shutil.copy2(FEATURES, OUTPUT / FEATURES.name)
+        target = release_docs / pdf.name
+        if not target.exists() or hashlib.sha256(pdf.read_bytes()).digest() != hashlib.sha256(target.read_bytes()).digest():
+            shutil.copy2(pdf, target)
+    feature_target = OUTPUT / FEATURES.name
+    if not feature_target.exists() or FEATURES.read_bytes() != feature_target.read_bytes():
+        shutil.copy2(FEATURES, feature_target)
     windows = OUTPUT / "Verdant_Disclosure_Scorer_Windows.zip"
     intel = OUTPUT / "MAC Files" / "Verdant_Intel_BigSur_Build_Kit.zip"
     m4 = OUTPUT / "MAC Files" / "Verdant_M4_MacBook_Air_Build_Kit.zip"

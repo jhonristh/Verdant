@@ -20,7 +20,7 @@ class RuntimePathsTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as root:
             executable = Path(root) / "Verdant" / "Verdant.exe"
             result = data_directory(executable=executable, frozen=True, platform="win32")
-            self.assertEqual(result, executable.parent / "data")
+            self.assertEqual(result.resolve(), (executable.parent / "data").resolve())
 
     def test_source_uses_local_data(self):
         root = Path("/example/Verdant")
