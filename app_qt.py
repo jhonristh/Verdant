@@ -139,6 +139,66 @@ class OCRWorker(QThread):
         self.completed.emit(results, errors)
 
 
+class LeadWorker(QThread):
+    progress = Signal(int, int, str)
+    completed = Signal(object, str)
+
+    def __init__(self, items, documents, company):
+        super().__init__()
+        self.items = items; self.documents = documents; self.company = company
+
+    def run(self):
+        try:
+            def advance(done, total, code):
+                if self.isInterruptionRequested(): raise OperationCancelled()
+                self.progress.emit(done, total, code)
+            results = assess_all(self.items, self.documents, advance, self.company)
+            self.completed.emit(results, "")
+        except OperationCancelled:
+            self.completed.emit(None, "canceled")
+        except Exception as exc:
+            self.completed.emit(None, str(exc))
+
+
+class ImportWorker(QThread):
+    progress = Signal(int, int, str)
+    completed = Signal(object, object, bool)
+
+    def __init__(self, paths):
+        super().__init__()
+        self.paths = paths
+
+    def run(self):
+        records = []; errors = []; completed = 0; total = 0; canceled = False
+        for raw in self.paths:
+            try:
+                with fitz.open(raw) as pdf: total += len(pdf)
+            except Exception as exc:
+                errors.append(f"{Path(raw).name}: {exc}")
+        for raw in self.paths:
+            if self.isInterruptionRequested(): canceled = True; break
+            path = Path(raw)
+            try:
+                pages = []
+                with fitz.open(path) as pdf:
+                    for number, page in enumerate(pdf, 1):
+                        if self.isInterruptionRequested(): raise OperationCancelled()
+                        pages.append(page.get_text("text"))
+                        completed += 1
+                        self.progress.emit(completed, total, f"{path.name} · PDF page {number}/{len(pdf)}")
+                digest = hashlib.sha256()
+                with path.open("rb") as stream:
+                    for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                        if self.isInterruptionRequested(): raise OperationCancelled()
+                        digest.update(chunk)
+                records.append((str(path), digest.hexdigest(), len(pages), sum(not text.strip() for text in pages)))
+            except OperationCancelled:
+                canceled = True; break
+            except Exception as exc:
+                errors.append(f"{path.name}: {exc}")
+        self.completed.emit(records, errors, canceled)
+
+
 class OperationCancelled(Exception):
     pass
 
@@ -177,7 +237,7 @@ class Workbench(QMainWindow):
         super().__init__()
         self.setWindowTitle("Verdant | Disclosure Scorer")
         self.setWindowIcon(QIcon(str(RESOURCES_DIR / "brand_mark.svg")))
-        self.setMinimumSize(1024, 640)
+        self.setMinimumSize(860, 480)
         self.store = Store()
         self.items = make_items()
         self.companies = load_companies()
@@ -215,6 +275,9 @@ class Workbench(QMainWindow):
         self.ocr_failed_pages = set()
         self.ocr_current = None
         self.pending_selection = None
+        self.background_worker = None
+        self.background_project_id = None
+        self.background_skipped = 0
         self.settings = QSettings(str(DATA_DIR / "viewer.ini"), QSettings.Format.IniFormat)
         self.build_ui()
         self.company.activated.connect(lambda *_: self.open_project())
@@ -226,7 +289,7 @@ class Workbench(QMainWindow):
             screen = QApplication.primaryScreen()
             if screen:
                 avail = screen.availableGeometry()
-                self.resize(max(1024, int(avail.width() * 0.92)), max(640, int(avail.height() * 0.92)))
+                self.resize(max(860, int(avail.width() * 0.92)), max(480, int(avail.height() * 0.92)))
             else:
                 self.resize(1500, 920)
         self.select_item(self.items[0])
@@ -277,13 +340,15 @@ class Workbench(QMainWindow):
         work_menu = QMenu(self)
         work_menu.addAction("Choose company and fiscal year", lambda: self.controls_panel.setVisible(True))
         work_menu.addAction("Saved workspaces", self.open_saved)
-        work_menu.addAction("Add PDFs", self.import_pdfs)
+        work_menu.addAction("Add PDFs", self.import_pdfs_background)
         work_menu.addAction("Choose reports folder", self.choose_reports_folder)
         work_menu.addAction("Relink missing PDF", self.relink_missing_pdf)
         work_menu.addAction("Import roster...", self.import_roster)
+        work_menu.addAction("Scorer name and evidence page setting", self.configure_reviewer)
         work_menu.addAction("Export workpaper (.verdant)", self.export_portable_workpaper)
         work_menu.addAction("Import workpaper (.verdant)", self.import_portable_workpaper)
-        work_menu.addAction("Find leads", self.check_for_score)
+        work_menu.addAction("Find leads", self.find_leads_background)
+        work_menu.addAction("Mark items with no hits as Not found", self.bulk_mark_no_hits)
         work_menu.addSeparator(); work_menu.addAction("Export Excel", self.export_excel)
         work_menu.addAction("Export for master workbook", self.export_for_master_workbook)
 
@@ -304,10 +369,8 @@ class Workbench(QMainWindow):
         self.year = QComboBox(); self.year.addItems(["2022", "2023", "2024", "2025"]); self.year.setAccessibleName("Fiscal year covered")
         self.year.setToolTip("Fiscal year covered by the report, not the publication year"); row.addWidget(self.year, 1)
         row.addWidget(self.button("Workspaces", self.open_saved))
-        row.addWidget(self.button("Add PDFs", self.import_pdfs))
-        row.addWidget(self.button("Find leads", self.check_for_score))
-        row.addWidget(self.button("Export Excel", self.export_excel))
-        row.addWidget(self.button("Export for master workbook", self.export_for_master_workbook))
+        row.addWidget(self.button("Add PDFs", self.import_pdfs_background))
+        row.addWidget(self.button("Find leads", self.find_leads_background))
         self.controls_panel = controls
         layout.addWidget(controls)
 
@@ -498,12 +561,16 @@ class Workbench(QMainWindow):
         self.pdf_search.setClearButtonEnabled(True)
         self.pdf_search.returnPressed.connect(lambda: self.find_pdf_text(1))
         self.pdf_search.textChanged.connect(self.reset_pdf_search)
+        self.find_scope = QComboBox()
+        self.find_scope.addItems(["This PDF", "All PDFs", "Checklist"])
+        self.find_scope.currentIndexChanged.connect(self.reset_pdf_search)
         self.pdf_search_count = QLabel("0 matches")
         search_row.addWidget(self.pdf_search, 1)
+        search_row.addWidget(self.find_scope)
         search_row.addWidget(self.button("Previous match", lambda: self.find_pdf_text(-1)))
         search_row.addWidget(self.button("Next match", lambda: self.find_pdf_text(1)))
         search_row.addWidget(self.pdf_search_count)
-        ll_pdf.addLayout(search_row)
+        layout.insertLayout(2, search_row)
 
         # PDF view tabs: ONLY All PDF pages | Highlighted page
         self.view_tabs = QTabWidget()
@@ -539,7 +606,7 @@ class Workbench(QMainWindow):
         rl_ev = QVBoxLayout(right_evidence_pane)
         rl_ev.setContentsMargins(12, 8, 12, 6)
         rl_ev.setSpacing(6)
-        right_evidence_pane.setMinimumWidth(420)
+        right_evidence_pane.setMinimumWidth(320)
 
         self.item_title = QLabel()
         self.item_title.setFont(QFont("Segoe UI", 14, QFont.Weight.DemiBold))
@@ -559,6 +626,7 @@ class Workbench(QMainWindow):
         self.keyword_filter.setPlaceholderText("Filter matched pages by word or phrase")
         self.keyword_filter.setClearButtonEnabled(True)
         self.keyword_filter.textChanged.connect(self.display_hits)
+        self.keyword_filter.hide()
         self.hit_count = QLabel("0 hits"); self.hit_count.setObjectName("muted")
         filter_row.addWidget(self.keyword_filter, 1)
         filter_row.addWidget(self.hit_count)
@@ -625,6 +693,7 @@ class Workbench(QMainWindow):
         ll.addWidget(self.pane_title("Checklist"))
         self.filter = QLineEdit(); self.filter.setPlaceholderText("Filter code, title or keyword")
         self.filter.setClearButtonEnabled(True); self.filter.textChanged.connect(self.render_items); ll.addWidget(self.filter)
+        self.filter.hide()
         legend = QLabel(f"{MARKS['open']} not reviewed   {MARKS['unsupported']} not supported   {MARKS['supported']} supported")
         legend.setObjectName("muted"); legend.setStyleSheet("font-size:12px;"); ll.addWidget(legend)
         self.item_list = QListWidget(); self.item_list.setObjectName("checklist")
@@ -669,6 +738,8 @@ class Workbench(QMainWindow):
         self.doc_name = QLineEdit(); self.doc_name.setPlaceholderText("Select a hit or enter the document name"); form.addWidget(self.doc_name)
         form.addWidget(QLabel("PDF page reference(s)"))
         self.pages = QLineEdit(); self.pages.setPlaceholderText("e.g. 8, 44"); form.addWidget(self.pages)
+        form.addWidget(QLabel("Printed page label(s), if shown"))
+        self.printed_pages = QLineEdit(); self.printed_pages.setPlaceholderText("Optional page label in the report"); form.addWidget(self.printed_pages)
         form.addWidget(QLabel("Evidence excerpt / reviewer note"))
         self.evidence = QTextEdit(); self.evidence.setMinimumHeight(145)
         self.evidence.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
@@ -695,10 +766,14 @@ class Workbench(QMainWindow):
         scoring_layout.addWidget(self.checklist_splitter, 1)
         self.splitter = self.checklist_splitter
 
-        for signal in (self.found.toggled, self.absent.toggled, self.doc_name.textChanged, self.pages.textChanged, self.evidence.textChanged):
+        for signal in (self.found.toggled, self.absent.toggled, self.doc_name.textChanged, self.pages.textChanged, self.printed_pages.textChanged, self.evidence.textChanged):
             signal.connect(lambda *_: self.on_form_changed())
 
         self.statusBar().showMessage("Open a company-year workpaper to begin")
+        self.task_progress = QProgressBar(); self.task_progress.setFixedWidth(140); self.task_progress.hide()
+        self.task_cancel = self.button("Cancel task", self.cancel_background); self.task_cancel.hide()
+        self.statusBar().addPermanentWidget(self.task_progress)
+        self.statusBar().addPermanentWidget(self.task_cancel)
         save_action = QAction(self); save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self.save); self.addAction(save_action)
         next_action = QAction(self); next_action.setShortcut("Alt+Right")
@@ -906,6 +981,7 @@ class Workbench(QMainWindow):
         self.absent.setAutoExclusive(True); self.found.setAutoExclusive(True)
         self.found.setEnabled(not locked or self.found.isChecked())
         self.doc_name.setText(saved[2] if saved else ""); self.pages.setText(saved[3] if saved else "")
+        self.printed_pages.setText(self.store.score_records(self.project_id).get(item["id"], {}).get("printed_pages", "") if saved else "")
         self.evidence.setPlainText(saved[1] if saved else "")
         self.search_hits()
         self.saved_form = self.form_state(); self.loading_form = False
@@ -919,13 +995,13 @@ class Workbench(QMainWindow):
         if lead:
             best = lead["hits"][0] if lead["hits"] else None
             source = f"\nBest hit: {best['document']}, PDF p. {best['page']}" if best else "\nNo matching extractable passage"
-            self.prediction.setText(f"{lead['label']}  ·  {item['weight'] * lead['suggestion']} proposed point(s)\n{lead['reason']}{source}")
+            self.prediction.setText(f"{lead['label']}  ·  evidence lead only\n{lead['reason']}{source}")
         else: self.prediction.setText("Run Find leads to see a source passage.")
         self.apply_prediction_button.setEnabled(bool(lead and self.project_id))
 
     def form_state(self):
         return (self.found.isChecked(), self.absent.isChecked(), self.doc_name.text(),
-                self.pages.text(), self.evidence.toPlainText())
+                self.pages.text(), self.printed_pages.text(), self.evidence.toPlainText())
 
     def confirm_unsaved(self):
         if self.loading_form or self.saved_form is None or self.form_state() == self.saved_form: return True
@@ -986,7 +1062,7 @@ class Workbench(QMainWindow):
             row = QListWidgetItem(f"{index}.  {name} \u00b7 PDF page {number} \u00b7 {len(found)} term(s){ocr_mark}")
             row.setToolTip(row.text()); self.hit_list.addItem(row)
         if self.visible_hits:
-            self.hit_count.setText(f"{len(self.visible_hits)} shown of {len(self.hits)} matching page(s) for this FY. Select a numbered hit to inspect the proposal.")
+            self.hit_count.setText(f"{len(self.visible_hits)} shown of {len(self.hits)} matching page(s) for this FY. Select a numbered hit to inspect the passage.")
         elif self.hits:
             self.hit_count.setText("No matching page passes this filter. Clear the filter to see all keyword hits.")
         else:
@@ -1032,20 +1108,33 @@ class Workbench(QMainWindow):
 
     def reset_pdf_search(self):
         self.pdf_search_index = -1
+        if self.find_scope.currentText() == "Checklist":
+            self.filter.setText(self.pdf_search.text())
+            self.pdf_search_count.setText("Checklist filtered")
+            return
+        self.filter.clear()
         self.pdf_search_count.setText("Press Enter to search" if self.pdf_search.text().strip() else "0 matches")
 
     def find_pdf_text(self, direction=1):
+        if self.find_scope.currentText() == "Checklist":
+            self.work_tabs.setCurrentIndex(1)
+            self.filter.setText(self.pdf_search.text())
+            return
         name = self.pdf_document.currentText()
-        pages = next((pages for document, pages in self.docs if document == name), [])
+        documents = self.docs if self.find_scope.currentText() == "All PDFs" else [
+            (document, pages) for document, pages in self.docs if document == name]
         query = self.pdf_search.text().strip()
-        matches = [(number, match.start(), match.end()) for number, text in enumerate(pages, 1)
+        matches = [(document, number, match.start(), match.end())
+                   for document, pages in documents for number, text in enumerate(pages, 1)
                    for match in re.finditer(re.escape(query), text, re.I)] if query else []
         if not matches:
             self.pdf_search_count.setText("0 matches")
             return
         self.pdf_search_index = (getattr(self, "pdf_search_index", -1) + direction) % len(matches)
-        number, start, end = matches[self.pdf_search_index]
-        self.page_target = (name, number)
+        document, number, start, end = matches[self.pdf_search_index]
+        if self.pdf_document.currentText() != document:
+            self.pdf_document.setCurrentText(document)
+        self.page_target = (document, number)
         self.view_tabs.setCurrentIndex(1)
         self.render_page()
         self.reader_tabs.setCurrentIndex(1)
@@ -1250,6 +1339,9 @@ class Workbench(QMainWindow):
     def import_roster(self):
         source, _ = QFileDialog.getOpenFileName(self, "Import company roster", "", "Excel (*.xlsx)")
         if not source: return
+        self.apply_roster_path(source)
+
+    def apply_roster_path(self, source):
         try:
             names = load_companies(Path(source))
             if not names: raise ValueError("The Companies sheet has no company names in column C from row 4.")
@@ -1263,6 +1355,36 @@ class Workbench(QMainWindow):
         if selected in names: self.company.setCurrentText(selected)
         self.company.blockSignals(False)
         self.statusBar().showMessage(f"Imported roster with {len(names)} companies.", 8000)
+
+    def first_run_setup(self):
+        if self.store.setting("first_run_complete"):
+            return
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Welcome to Verdant")
+        dialog.setMinimumWidth(560)
+        layout = QVBoxLayout(dialog)
+        intro = QLabel("Choose a reports folder and scorer name. You can change these later from Workpaper.")
+        intro.setWordWrap(True); layout.addWidget(intro)
+        layout.addWidget(QLabel("Reports folder"))
+        reports = QLineEdit(); reports.setText(self.store.setting("reports_root", "")); layout.addWidget(reports)
+        layout.addWidget(self.button("Browse reports folder", lambda: reports.setText(
+            QFileDialog.getExistingDirectory(dialog, "Choose reports folder", reports.text()))))
+        layout.addWidget(QLabel("Scorer name"))
+        scorer = QLineEdit(); scorer.setText(self.store.setting("scorer_name", "")); layout.addWidget(scorer)
+        layout.addWidget(QLabel("Roster workbook (optional)"))
+        roster = QLineEdit(); layout.addWidget(roster)
+        layout.addWidget(self.button("Browse roster", lambda: roster.setText(
+            QFileDialog.getOpenFileName(dialog, "Choose roster", "", "Excel (*.xlsx)")[0])))
+        controls = QHBoxLayout(); controls.addStretch()
+        controls.addWidget(self.button("Continue", dialog.accept, True)); layout.addLayout(controls)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        if reports.text().strip():
+            try: self.store.set_reports_root(reports.text().strip())
+            except ValueError as exc: QMessageBox.warning(self, "Reports folder", str(exc))
+        self.store.set_setting("scorer_name", scorer.text().strip())
+        if roster.text().strip(): self.apply_roster_path(roster.text().strip())
+        self.store.set_setting("first_run_complete", "1")
 
     def export_portable_workpaper(self):
         if not self.project_id: return QMessageBox.information(self, "Workpaper", "Select a company and fiscal year first.")
@@ -1302,9 +1424,9 @@ class Workbench(QMainWindow):
     # ---- workpapers and reports ----------------------------------------
     def open_project(self):
         company = self.company.currentText(); year = self.year.currentText()
-        if self.ocr_running:
+        if self.ocr_running or self.busy:
             self.pending_selection = (company, year)
-            self.statusBar().showMessage(f"Pending workpaper: {company}, FY {year}; opens after OCR finishes.")
+            self.statusBar().showMessage(f"Pending workpaper: {company}, FY {year}; opens after the current task finishes.")
             return
         if company not in self.companies:
             return
@@ -1427,6 +1549,55 @@ class Workbench(QMainWindow):
             self.page_image.setPixmap(QPixmap()); self.page_image.setText("Import a PDF to view its original pages.")
             self.page_label.setText("No page selected"); self.page_status.setText("No document")
             self.extracted_text.clear()
+
+    def begin_background(self, worker, total, message):
+        self.busy = True
+        self.background_worker = worker
+        self.background_project_id = self.project_id
+        self.task_progress.setRange(0, max(1, total)); self.task_progress.setValue(0)
+        self.task_progress.show(); self.task_cancel.show()
+        self.statusBar().showMessage(message)
+        worker.finished.connect(lambda: setattr(self, "background_worker", None))
+        worker.start()
+
+    def cancel_background(self):
+        if self.background_worker:
+            self.background_worker.requestInterruption()
+            self.statusBar().showMessage("Cancel requested; finishing the current page...")
+
+    def end_background(self):
+        self.busy = False
+        self.task_progress.hide(); self.task_cancel.hide()
+        if self.pending_selection:
+            company, year = self.pending_selection
+            self.pending_selection = None
+            self.company.setCurrentText(company); self.year.setCurrentText(year)
+            self.open_project()
+
+    def import_pdfs_background(self):
+        if self.busy or self.ocr_running:
+            return self.statusBar().showMessage("Wait for the current task to finish.", 5000)
+        if not self.project_id:
+            return QMessageBox.information(self, "Workpaper", "Select a company and fiscal year first.")
+        paths, _ = QFileDialog.getOpenFileNames(self, "Import company reports", "", "PDF files (*.pdf)")
+        if not paths: return
+        worker = ImportWorker(paths)
+        worker.progress.connect(lambda done, total, label: (
+            self.task_progress.setMaximum(max(1, total)), self.task_progress.setValue(done),
+            self.statusBar().showMessage(f"Importing {label} · {done}/{total}")))
+        worker.completed.connect(self.import_background_completed)
+        self.begin_background(worker, len(paths), f"Importing {len(paths)} PDF(s); you can keep reading.")
+
+    def import_background_completed(self, records, errors, canceled):
+        project = self.background_project_id
+        for path, digest, count, scanned in records:
+            try: self.store.add_report(project, path, digest, count, scanned)
+            except Exception as exc: errors.append(f"{Path(path).name}: {exc}")
+        if project == self.project_id:
+            self.load_reports(); self.update_prediction(self.current); self.refresh_totals(); self.render_items()
+        self.end_background()
+        if errors: QMessageBox.warning(self, "Import review", "\n".join(errors))
+        self.statusBar().showMessage(("Import canceled; " if canceled else "") + f"Imported {len(records)} PDF(s).", 8000)
 
     def import_pdfs(self):
         if self.ocr_running: return QMessageBox.information(self, "OCR in progress", "Wait for OCR to finish before importing more PDFs.")
@@ -1561,6 +1732,37 @@ class Workbench(QMainWindow):
             self.company.setCurrentText(company); self.year.setCurrentText(year)
             self.open_project()
 
+    def find_leads_background(self):
+        if self.busy or self.ocr_running:
+            return self.statusBar().showMessage("Wait for the current task to finish.", 5000)
+        if not self.project_id or not self.docs:
+            return QMessageBox.information(self, "Add PDF reports", "Select a workpaper and import PDF reports first.")
+        eligible, skipped = self.eligible_documents()
+        if not eligible:
+            return QMessageBox.information(self, "No reports for selected year", "Add a report for this fiscal year first.")
+        self.background_skipped = len(skipped)
+        worker = LeadWorker(self.items, eligible, self.active_company)
+        worker.progress.connect(lambda done, total, code: (
+            self.task_progress.setValue(done),
+            self.statusBar().showMessage(f"Finding leads: {code} · {done}/{total}")))
+        worker.completed.connect(self.leads_background_completed)
+        self.begin_background(worker, len(self.items), "Finding leads; you can keep reading.")
+
+    def leads_background_completed(self, results, error):
+        project = self.background_project_id
+        if results is not None:
+            self.store.save_predictions(project, self.items, results)
+            if project == self.project_id:
+                self.suggestions = results; self.skipped_reports = self.background_skipped
+                self.review_toggle.setChecked(False)
+                self.update_prediction(self.current); self.refresh_totals(); self.render_items()
+        self.end_background()
+        if error and error != "canceled":
+            QMessageBox.warning(self, "Find leads failed", error)
+        else:
+            self.statusBar().showMessage("Lead finding canceled." if error else
+                f"Found {sum(result['suggestion'] for result in results.values())} items with leads.", 8000)
+
     def check_for_score(self):
         if self.busy: return
         if self.ocr_running: return QMessageBox.information(self, "OCR in progress", "Wait for OCR to finish before checking scores.")
@@ -1640,8 +1842,11 @@ class Workbench(QMainWindow):
             QMessageBox.warning(self, "Evidence required", "A score of 1 needs a document, page, and excerpt."); return False
         for later in cascade:
             old = scores[f"SDG{self.current['number']}-{later}"]
-            self.store.save_score(self.project_id, f"SDG{self.current['number']}-{later}", 0, old[1], old[2], old[3])
-        self.store.save_score(self.project_id, code, score, excerpt, document, pages)
+            code_later = f"SDG{self.current['number']}-{later}"
+            printed = self.store.score_records(self.project_id)[code_later].get("printed_pages", "")
+            self.store.save_score(self.project_id, code_later, 0, old[1], old[2], old[3], printed_pages=printed)
+        self.store.save_score(self.project_id, code, score, excerpt, document, pages,
+                              printed_pages=self.printed_pages.text().strip())
         self.saved_form = self.form_state()
         self.refresh_totals(); self.render_items(); self.select_item_refresh()
         self.statusBar().showMessage(f"Saved {code} \u00b7 score {score}" + (f" \u00b7 cleared {', '.join(cascade)}" if cascade else ""), 4000)
@@ -1683,6 +1888,26 @@ class Workbench(QMainWindow):
             if item["id"] not in scores and self.suggestions.get(item["id"], {}).get("suggestion") == 1:
                 self.select_item(item); return
         self.statusBar().showMessage("No unreviewed items with leads.", 5000)
+
+    def bulk_mark_no_hits(self):
+        if not self.project_id or len(self.suggestions) != len(self.items):
+            return QMessageBox.information(self, "Find leads first", "Run Find leads before marking items with no hits.")
+        scores = self.all_scores()
+        targets = [item for item in self.items if item["id"] not in scores
+                   and not self.suggestions[item["id"]]["hits"]]
+        if not targets:
+            return self.statusBar().showMessage("No unreviewed items without hits.", 5000)
+        choice = QMessageBox.question(self, "Bulk Not found",
+            f"Mark {len(targets)} unreviewed items with no extracted-text hits as Not found (0)? "
+            "Each decision will be tagged bulk in the audit log. OCR gaps can hide evidence.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+            QMessageBox.StandardButton.Cancel)
+        if choice != QMessageBox.StandardButton.Yes:
+            return
+        for item in targets:
+            self.store.save_score(self.project_id, item["id"], 0, "No extracted-text hits; bulk review", "", "", source="bulk")
+        self.refresh_totals(); self.render_items(); self.select_item_refresh()
+        self.statusBar().showMessage(f"Marked {len(targets)} items Not found with bulk audit tags.", 8000)
 
     def next_item(self):
         index = self.items.index(self.current)
@@ -1775,6 +2000,19 @@ class Workbench(QMainWindow):
         box.addLayout(buttons)
         self.summary_dialog = dialog; dialog.show()
 
+    def configure_reviewer(self):
+        name, accepted = QInputDialog.getText(self, "Scorer name", "Name for the Scorer/Ticker column:",
+            text=self.store.setting("scorer_name", ""))
+        if not accepted:
+            return
+        self.store.set_setting("scorer_name", name.strip())
+        choices = ["PDF", "Printed"]
+        current = self.store.setting("evidence_page_type", "PDF")
+        page_type, accepted = QInputDialog.getItem(self, "Evidence page type",
+            "Page reference in exports:", choices, choices.index(current) if current in choices else 0, False)
+        if accepted:
+            self.store.set_setting("evidence_page_type", page_type)
+
     def export_excel(self):
         if not self.project_id: return QMessageBox.warning(self, "Open workpaper", "Open a workpaper first.")
         from openpyxl import Workbook
@@ -1782,13 +2020,15 @@ class Workbench(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export scores", f"{company}_{year}_scoring.xlsx", "Excel (*.xlsx)")
         if not path: return
         workbook = Workbook(); sheet = workbook.active; sheet.title = "Scores"
-        sheet.append(["Company", "Fiscal year", "Framework", "Item", "Score", "Weight", "Weighted points", "Document name", "Page(s)", "Evidence excerpt"])
+        sheet.append(["Company", "Fiscal year", "Framework", "Item", "Score", "Weight", "Weighted points", "Document name", "PDF page(s)", "Evidence excerpt", "Printed page(s)", "Scorer"])
         scores = self.store.scores(self.project_id)
         for item in self.items:
             value = scores.get(item["id"])
             sheet.append([company, year, item["kind"], item["id"],
                           value[0] if value else None, item["weight"], value[0] * item["weight"] if value else None,
-                          value[2] if value else "", value[3] if value else "", value[1] if value else ""])
+                          value[2] if value else "", value[3] if value else "", value[1] if value else "",
+                          self.store.score_records(self.project_id).get(item["id"], {}).get("printed_pages", ""),
+                          self.store.setting("scorer_name", "")])
         sheet.freeze_panes = "A2"; sheet.auto_filter.ref = sheet.dimensions
         for column, width in {"A":30, "B":15, "C":14, "D":22, "E":10, "F":10, "G":18, "H":45, "I":15, "J":90}.items():
             sheet.column_dimensions[column].width = width
@@ -1810,7 +2050,7 @@ class Workbench(QMainWindow):
 def main():
     application = QApplication(sys.argv)
     application.setStyleSheet(STYLE)
-    window = Workbench(); window.show()
+    window = Workbench(); window.show(); window.first_run_setup()
     return application.exec()
 
 

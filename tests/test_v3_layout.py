@@ -1,6 +1,7 @@
 import csv
 import hashlib
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -56,6 +57,33 @@ class V3LayoutTests(unittest.TestCase):
         self.window.load_reports()
         return pdf_path
 
+    def _wait_background(self):
+        deadline = time.monotonic() + 20
+        while self.window.busy and time.monotonic() < deadline:
+            self.qt.processEvents(); time.sleep(0.01)
+        self.qt.processEvents()
+        self.assertFalse(self.window.busy)
+
+    def test_background_import_and_leads_keep_reader_available(self):
+        project = self.window.store.project("Test PLC", "2022")
+        self.window.project_id = project
+        self.window.active_company = "Test PLC"; self.window.active_year = "2022"
+        self.window.company.addItem("Test PLC"); self.window.company.setCurrentText("Test PLC")
+        path = Path(self.temp.name) / "annual_FY2022.pdf"
+        pdf = fitz.open(); page = pdf.new_page()
+        page.insert_text((50, 50), "Our environmental compliance risk cost PHP 10 million.")
+        pdf.save(path); pdf.close()
+        with patch.object(app_qt.QFileDialog, "getOpenFileNames", return_value=([str(path)], "")):
+            self.window.import_pdfs_background()
+        self.assertTrue(self.window.busy)
+        self.assertTrue(self.window.task_cancel.isVisibleTo(self.window) or not self.window.isVisible())
+        self._wait_background()
+        self.assertEqual(len(self.window.docs), 1)
+        self.window.find_leads_background()
+        self.assertTrue(self.window.busy)
+        self._wait_background()
+        self.assertEqual(self.window.suggestions["E1"]["suggestion"], 1)
+
     # Test 1: Splitter properties
     def test_1_reader_splitter_properties(self):
         self.assertEqual(self.window.reader_splitter.orientation(), Qt.Orientation.Horizontal)
@@ -68,9 +96,9 @@ class V3LayoutTests(unittest.TestCase):
         self.window.show()
 
         budgets = [
-            (1920, 1080, 640),
-            (1536, 864, 500),
-            (1280, 720, 400),
+            (1920, 1080, 600),
+            (1536, 864, 460),
+            (1280, 720, 360),
         ]
         for w, h, min_pane_height in budgets:
             self.window.resize(w, h)
@@ -86,6 +114,13 @@ class V3LayoutTests(unittest.TestCase):
             # Pin button is inside window bounds
             pin_geo = self.window.pin_button.mapTo(self.window, self.window.pin_button.rect().bottomRight())
             self.assertLessEqual(pin_geo.y(), h, f"Pin button pushed below window bottom at {w}x{h}")
+
+    def test_compact_logical_size_for_1366_by_768_at_150_percent(self):
+        self.window.show(); self.window.resize(911, 512); self.qt.processEvents()
+        self.assertLessEqual(self.window.minimumWidth(), 911)
+        self.assertLessEqual(self.window.minimumHeight(), 512)
+        self.assertLessEqual(sum(self.window.reader_splitter.sizes()), self.window.width())
+        self.assertTrue(self.window.work_tabs.isVisible())
 
     # Test 3: Opening OCR details popup does NOT change PDF view size
     def test_3_ocr_popup_does_not_resize_pdf_view(self):
@@ -225,6 +260,26 @@ class V3LayoutTests(unittest.TestCase):
         self.window.find_pdf_text(1)
         self.assertEqual(self.window.page_target[1], 3)
         self.assertIn("2 / 2", self.window.pdf_search_count.text())
+
+    def test_shared_find_bar_filters_checklist_and_searches_all_pdfs(self):
+        self._setup_dummy_pdf(["One report has climate risk"])
+        other = Path(self.temp.name) / "other_FY2022.pdf"
+        pdf = fitz.open(); pdf.new_page().insert_text((50, 50), "Second report has climate risk")
+        pdf.save(other); pdf.close()
+        digest = hashlib.sha256(other.read_bytes()).hexdigest()
+        self.window.store.add_report(self.window.project_id, other, digest, 1, 0)
+        self.window.load_reports()
+        self.window.find_scope.setCurrentText("All PDFs")
+        self.window.pdf_search.setText("climate risk")
+        self.window.find_pdf_text(1)
+        self.assertIn("1 / 2", self.window.pdf_search_count.text())
+        self.window.find_pdf_text(1)
+        self.assertIn("2 / 2", self.window.pdf_search_count.text())
+        self.window.find_scope.setCurrentText("Checklist")
+        self.window.pdf_search.setText("E1")
+        self.window.find_pdf_text(1)
+        self.assertEqual(self.window.work_tabs.currentIndex(), 1)
+        self.assertEqual(self.window.filter.text(), "E1")
 
     def test_pin_uses_selected_passage_and_source_page(self):
         self._setup_dummy_pdf(["A climate risk is disclosed here"])

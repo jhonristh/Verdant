@@ -30,6 +30,11 @@ class Store:
             self.db.execute("""UPDATE scores SET updated_at=COALESCE(
                 (SELECT MAX(changed_at) FROM audit_log a WHERE a.project_id=scores.project_id AND a.item_id=scores.item_id),
                 '1970-01-01T00:00:00')""")
+        if "printed_pages" not in columns:
+            self.db.execute("ALTER TABLE scores ADD COLUMN printed_pages TEXT DEFAULT ''")
+        audit_columns = {row[1] for row in self.db.execute("PRAGMA table_info(audit_log)")}
+        if "source" not in audit_columns:
+            self.db.execute("ALTER TABLE audit_log ADD COLUMN source TEXT DEFAULT 'manual'")
         self.db.commit()
 
     def project(self, company, year):
@@ -53,12 +58,12 @@ class Store:
             self.db.execute("DELETE FROM projects WHERE id=?", (project_id,))
         self.sync_csv()
 
-    def save_score(self, project_id, item, score, evidence, document, pages):
+    def save_score(self, project_id, item, score, evidence, document, pages, source="manual", printed_pages=""):
         previous = self.db.execute("SELECT score FROM scores WHERE project_id=? AND item_id=?", (project_id, item)).fetchone()
         changed_at = datetime.now().isoformat(timespec="microseconds")
         with self.db:
-            self.db.execute("INSERT INTO scores(project_id,item_id,score,evidence,document_name,pages,updated_at) VALUES (?,?,?,?,?,?,?) ON CONFLICT(project_id,item_id) DO UPDATE SET score=excluded.score,evidence=excluded.evidence,document_name=excluded.document_name,pages=excluded.pages,updated_at=excluded.updated_at", (project_id, item, score, evidence, document, pages, changed_at))
-            self.db.execute("INSERT INTO audit_log(project_id,item_id,changed_at,old_score,new_score,document_name,pages) VALUES (?,?,?,?,?,?,?)", (project_id, item, changed_at, previous[0] if previous else None, score, document, pages))
+            self.db.execute("INSERT INTO scores(project_id,item_id,score,evidence,document_name,pages,updated_at,printed_pages) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(project_id,item_id) DO UPDATE SET score=excluded.score,evidence=excluded.evidence,document_name=excluded.document_name,pages=excluded.pages,updated_at=excluded.updated_at,printed_pages=excluded.printed_pages", (project_id, item, score, evidence, document, pages, changed_at, printed_pages))
+            self.db.execute("INSERT INTO audit_log(project_id,item_id,changed_at,old_score,new_score,document_name,pages,source) VALUES (?,?,?,?,?,?,?,?)", (project_id, item, changed_at, previous[0] if previous else None, score, document, pages, source))
         self.sync_csv()
 
     def scores(self, project_id):
@@ -66,8 +71,8 @@ class Store:
 
     def score_records(self, project_id):
         return {row[0]: {"score": row[1], "evidence": row[2], "document": row[3],
-                         "pages": row[4], "updated_at": row[5] or "1970-01-01T00:00:00"}
-                for row in self.db.execute("SELECT item_id,score,evidence,document_name,pages,updated_at FROM scores WHERE project_id=?", (project_id,))}
+                         "pages": row[4], "updated_at": row[5] or "1970-01-01T00:00:00", "printed_pages": row[6] or ""}
+                for row in self.db.execute("SELECT item_id,score,evidence,document_name,pages,updated_at,printed_pages FROM scores WHERE project_id=?", (project_id,))}
 
     def setting(self, key, default=None):
         row = self.db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()

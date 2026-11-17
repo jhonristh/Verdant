@@ -49,6 +49,13 @@ class MasterExportTests(unittest.TestCase):
                              ["Ana", 2022, "ESG", "E1", "alpha.pdf", "5", "Site-specific policy", "Alpha PLC"])
             self.assertEqual(evidence.max_row, 8)  # E1, SDG1 x3, S10
             self.assertIn("master workbook", book["README"]["A1"].value)
+            store.save_score(alpha22, "E1", 1, "Site-specific policy", "alpha.pdf", "5", printed_pages="iv")
+            store.set_setting("scorer_name", "Reviewer One")
+            store.set_setting("evidence_page_type", "Printed")
+            export_master_workbook(store, output, roster_path)
+            printed_book = load_workbook(output, data_only=False)
+            self.assertEqual(printed_book["ESG_Scores"]["B4"].value, "Reviewer One")
+            self.assertEqual(printed_book["Evidence_Log"]["F4"].value, "iv")
             store.db.close()
 
 

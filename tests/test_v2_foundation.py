@@ -15,6 +15,19 @@ from PySide6.QtWidgets import QApplication, QMessageBox, QTreeWidget
 
 
 class FoundationTests(unittest.TestCase):
+    def test_next_unreviewed_and_bulk_audit_tag(self):
+        self.window.project_id = self.window.store.project("Test PLC", "2022")
+        self.window.store.save_score(self.window.project_id, "E2", 0, "", "", "")
+        self.window.select_item(self.window.items[0])
+        self.window.next_unreviewed()
+        self.assertEqual(self.window.current["id"], "E3")
+        self.window.suggestions = {item["id"]: {"suggestion": 0, "hits": [], "confidence": "low", "label": "No lead", "reason": "No hit"}
+                                   for item in self.window.items}
+        with patch.object(QMessageBox, "question", return_value=QMessageBox.StandardButton.Yes):
+            self.window.bulk_mark_no_hits()
+        source = self.window.store.db.execute("SELECT source FROM audit_log WHERE project_id=? AND item_id='E3' ORDER BY id DESC LIMIT 1", (self.window.project_id,)).fetchone()[0]
+        self.assertEqual(source, "bulk")
+        self.assertEqual(self.window.store.scores(self.window.project_id)["E2"][0], 0)
     @classmethod
     def setUpClass(cls):
         cls.qt = QApplication.instance() or QApplication([])

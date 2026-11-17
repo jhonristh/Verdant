@@ -28,8 +28,8 @@ def export_workpaper(store, project_id, destination):
                 "page_count": count, "scanned_pages": scanned}
                for path, digest, count, scanned in stored_reports]
     path_map = {row[0]: report["path"] for row, report in zip(stored_reports, reports)}
-    audit = [dict(zip(("item_id", "changed_at", "old_score", "new_score", "document", "pages"), row))
-             for row in store.db.execute("SELECT item_id,changed_at,old_score,new_score,document_name,pages FROM audit_log WHERE project_id=?", (project_id,))]
+    audit = [dict(zip(("item_id", "changed_at", "old_score", "new_score", "document", "pages", "source"), row))
+             for row in store.db.execute("SELECT item_id,changed_at,old_score,new_score,document_name,pages,source FROM audit_log WHERE project_id=?", (project_id,))]
     ocr = [{"path": path_map.get(path, _portable_report_path(store, path)), "sha256": digest,
             "page": number, "text": text}
            for path, digest, number, text in store.db.execute(
@@ -66,7 +66,7 @@ def import_workpaper(store, source, accept_newer=False):
     conflicts = []
     for item, incoming in payload.get("scores", {}).items():
         local = current.get(item)
-        if local and any(local[key] != incoming[key] for key in ("score", "evidence", "document", "pages")):
+        if local and any(local.get(key, "") != incoming.get(key, "") for key in ("score", "evidence", "document", "pages", "printed_pages")):
             conflicts.append({"item": item, "local": local, "incoming": incoming,
                               "winner": "incoming" if incoming["updated_at"] > local["updated_at"] else "local"})
     if conflicts and not accept_newer:
@@ -78,18 +78,18 @@ def import_workpaper(store, source, accept_newer=False):
             if local and incoming["updated_at"] <= local["updated_at"]:
                 continue
             if local and local != incoming:
-                store.db.execute("INSERT INTO audit_log(project_id,item_id,changed_at,old_score,new_score,document_name,pages) VALUES (?,?,?,?,?,?,?)",
-                                 (project_id, item, datetime.now().isoformat(timespec="microseconds"), local["score"], incoming["score"], incoming["document"], incoming["pages"]))
-            store.db.execute("""INSERT INTO scores(project_id,item_id,score,evidence,document_name,pages,updated_at)
-                VALUES (?,?,?,?,?,?,?) ON CONFLICT(project_id,item_id) DO UPDATE SET score=excluded.score,
-                evidence=excluded.evidence,document_name=excluded.document_name,pages=excluded.pages,updated_at=excluded.updated_at""",
-                (project_id, item, incoming["score"], incoming["evidence"], incoming["document"], incoming["pages"], incoming["updated_at"]))
+                store.db.execute("INSERT INTO audit_log(project_id,item_id,changed_at,old_score,new_score,document_name,pages,source) VALUES (?,?,?,?,?,?,?,?)",
+                                 (project_id, item, datetime.now().isoformat(timespec="microseconds"), local["score"], incoming["score"], incoming["document"], incoming["pages"], "import"))
+            store.db.execute("""INSERT INTO scores(project_id,item_id,score,evidence,document_name,pages,updated_at,printed_pages)
+                VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(project_id,item_id) DO UPDATE SET score=excluded.score,
+                evidence=excluded.evidence,document_name=excluded.document_name,pages=excluded.pages,updated_at=excluded.updated_at,printed_pages=excluded.printed_pages""",
+                (project_id, item, incoming["score"], incoming["evidence"], incoming["document"], incoming["pages"], incoming["updated_at"], incoming.get("printed_pages", "")))
         existing_audit = set(store.db.execute(
-            "SELECT item_id,changed_at,old_score,new_score,document_name,pages FROM audit_log WHERE project_id=?", (project_id,)))
+            "SELECT item_id,changed_at,old_score,new_score,document_name,pages,source FROM audit_log WHERE project_id=?", (project_id,)))
         for row in payload.get("audit", []):
-            values = (row["item_id"], row["changed_at"], row["old_score"], row["new_score"], row["document"], row["pages"])
+            values = (row["item_id"], row["changed_at"], row["old_score"], row["new_score"], row["document"], row["pages"], row.get("source", "manual"))
             if values not in existing_audit:
-                store.db.execute("INSERT INTO audit_log(project_id,item_id,changed_at,old_score,new_score,document_name,pages) VALUES (?,?,?,?,?,?,?)", (project_id, *values))
+                store.db.execute("INSERT INTO audit_log(project_id,item_id,changed_at,old_score,new_score,document_name,pages,source) VALUES (?,?,?,?,?,?,?,?)", (project_id, *values))
         for report in payload.get("reports", []):
             store.db.execute("""INSERT OR IGNORE INTO reports(project_id,path,sha256,page_count,scanned_pages)
                 VALUES (?,?,?,?,?)""", (project_id, report["path"], report["sha256"], report["page_count"], report["scanned_pages"]))

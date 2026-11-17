@@ -73,12 +73,14 @@ def build_master_export(store, roster_path=None):
     evidence.column_dimensions["G"].width = 80
     evidence.column_dimensions["H"].width = 36
 
+    page_type = store.setting("evidence_page_type", "PDF")
+    scorer = store.setting("scorer_name", "")
     for number, ticker, company in roster:
         for year in YEARS:
             project_id = projects.get((company.casefold(), year))
             scores = store.scores(project_id) if project_id is not None else {}
             row = esg.max_row + 1
-            prefix = [number, ticker, company, int(year)]
+            prefix = [number, scorer or ticker, company, int(year)]
             esg.append(prefix + [scores[item][0] if item in scores else None for item in ESG_IDS])
             sdg.append(prefix)
             for group, first, last in (("E", "E", "N"), ("S", "O", "X"), ("G", "Y", "AH")):
@@ -102,8 +104,10 @@ def build_master_export(store, roster_path=None):
             for item in (*ESG_IDS, *(f"SDG{goal}-{stage}" for goal in range(1, 18) for stage in STAGES)):
                 value = scores.get(item)
                 if value and value[0] == 1:
-                    evidence.append([ticker, int(year), "SDG" if item.startswith("SDG") else "ESG",
-                                     item, value[2], value[3], value[1], company])
+                    record = store.score_records(project_id)[item]
+                    page = record["printed_pages"] if page_type == "Printed" and record["printed_pages"] else value[3]
+                    evidence.append([scorer or ticker, int(year), "SDG" if item.startswith("SDG") else "ESG",
+                                     item, value[2], page, value[1], company])
 
     readme.append(["Verdant export for the consolidated master workbook"])
     for line in (
@@ -112,6 +116,7 @@ def build_master_export(store, roster_path=None):
         "Paste SDG_Scores!A4:BT into the matching master rows. Formula columns BU:BV are included for review.",
         "Paste Evidence_Log!A4:G into the master evidence log. Column H identifies the company in this export.",
         "Blank score cells mean unreviewed. Zero means reviewed and not found.",
+        f"Evidence_Log page references use {page_type} pages (falling back to PDF pages when no printed label was saved).",
         "Known master issue: Ticker values are scorer names, so Evidence_Log COUNTIFS counts scorer-year rather than company-year.",
         "Known master issue: SDG_Scores!D4 and D5 are hardcoded 2021 and 2022 in the supplied workbook.",
         "Known master issue: E/S/G score columns are weighted contributions (up to 33.3), despite the Guide's pillar/10*100 wording.",
