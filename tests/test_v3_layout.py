@@ -114,11 +114,14 @@ class V3LayoutTests(unittest.TestCase):
             self.assertLessEqual(pin_geo.y(), self.window.height(), f"Pin button pushed below window bottom at {w}x{h}")
 
     def test_compact_logical_size_for_1366_by_768_at_150_percent(self):
+        self._setup_dummy_pdf(["climate risk on this page"])
         self.window.show(); self.window.resize(911, 512); self.qt.processEvents()
         self.assertLessEqual(self.window.minimumWidth(), 911)
         self.assertLessEqual(self.window.minimumHeight(), 512)
         self.assertLessEqual(sum(self.window.reader_splitter.sizes()), self.window.width())
         self.assertTrue(self.window.work_tabs.isVisible())
+        pin_bottom = self.window.pin_button.mapTo(self.window, self.window.pin_button.rect().bottomRight())
+        self.assertLessEqual(pin_bottom.y(), self.window.height())
 
     # Test 3: Opening OCR details popup does NOT change PDF view size
     def test_3_ocr_popup_does_not_resize_pdf_view(self):
@@ -288,7 +291,9 @@ class V3LayoutTests(unittest.TestCase):
         cursor.setPosition(14, cursor.MoveMode.KeepAnchor)
         self.window.extracted_text.setTextCursor(cursor)
         self.window.pin_hit()
-        self.assertEqual(self.window.evidence.toPlainText(), "climate risk")
+        self.assertEqual(self.window.evidence.toPlainText(), "")
+        self.assertEqual(self.window.decision_pins.count(), 1)
+        self.assertEqual(self.window.store.evidence_pins(self.window.project_id, "E1")[0]["excerpt"], "climate risk")
         self.assertEqual(self.window.pages.text(), "1")
 
     def test_pin_extracted_selection_uses_current_page_with_stale_hit(self):
@@ -304,7 +309,46 @@ class V3LayoutTests(unittest.TestCase):
         self.window.extracted_text.setTextCursor(cursor)
         self.window.pin_hit()
         self.assertEqual(self.window.pages.text(), "2")
-        self.assertEqual(self.window.evidence.toPlainText(), "second")
+        self.assertEqual(self.window.decision_pins.count(), 1)
+        self.assertEqual(self.window.store.evidence_pins(self.window.project_id, "E4")[0]["excerpt"], "second")
+
+    def test_multiple_pins_follow_score_category_across_pdfs_and_pages(self):
+        first = self._setup_dummy_pdf(["first climate risk passage", "next climate risk passage"])
+        second = Path(self.temp.name) / "second_FY2022.pdf"
+        pdf = fitz.open(); pdf.new_page().insert_text((50, 50), "other climate risk passage")
+        pdf.save(second); pdf.close()
+        digest = hashlib.sha256(second.read_bytes()).hexdigest()
+        self.window.store.add_report(self.window.project_id, second, digest, 1, 0)
+        self.window.load_reports()
+        self.window.select_item(next(item for item in self.window.items if item["id"] == "E4"))
+        self.window.reader_tabs.setCurrentIndex(1)
+        for name, page, passage in ((first.name, 2, "next climate risk"),
+                                    (second.name, 1, "other climate risk")):
+            self.window.page_target = (name, page)
+            self.window.render_page()
+            text = self.window.extracted_text.toPlainText()
+            self.assertIn(passage, text, f"{name} PDF page {page}: {text!r}")
+            start = text.index(passage)
+            cursor = self.window.extracted_text.textCursor()
+            cursor.setPosition(start); cursor.setPosition(start + len(passage), cursor.MoveMode.KeepAnchor)
+            self.window.extracted_text.setTextCursor(cursor)
+            self.window.pin_hit()
+        self.assertEqual(self.window.current["id"], "E4")
+        self.assertEqual(self.window.decision_pins.count(), 2)
+        self.assertEqual(self.window.reader_pins.count(), 2)
+        self.assertEqual({pin["document"] for pin in self.window.store.evidence_pins(self.window.project_id, "E4")},
+                         {first.name, second.name})
+        self.window.found.setChecked(True)
+        self.assertTrue(self.window.save())
+        self.assertIsNone(self.window.store.score_records(self.window.project_id)["E4"]["evidence"])
+        self.window.select_item(self.window.items[0])
+        self.window.select_item(next(item for item in self.window.items if item["id"] == "E4"))
+        self.assertEqual(self.window.decision_pins.count(), 2)
+        self.assertEqual(self.window.evidence.toPlainText(), "")
+        self.window.decision_pins.setCurrentRow(0)
+        self.window.remove_selected_pin()
+        self.assertEqual(self.window.decision_pins.count(), 1)
+        self.assertEqual(self.window.store.scores(self.window.project_id)["E4"][0], 1)
 
     def test_ocr_completion_recalculates_saved_proposals(self):
         path = self._setup_dummy_pdf([""], num_scanned=0)
@@ -355,6 +399,26 @@ class V3LayoutTests(unittest.TestCase):
         self.assertTrue(self.window.help_dialog.isVisible())
         for button in self.window.findChildren(app_qt.QPushButton):
             self.assertTrue(button.toolTip(), button.text())
+
+    def test_credits_page_contains_only_name(self):
+        index = next(index for index in range(self.window.work_tabs.count())
+                     if self.window.work_tabs.tabText(index) == "Credits")
+        page = self.window.work_tabs.widget(index)
+        self.assertEqual([label.text() for label in page.findChildren(app_qt.QLabel)], ["Jargon"])
+
+    def test_one_general_spreadsheet_export_control(self):
+        buttons = [button.text() for button in self.window.controls_panel.findChildren(app_qt.QPushButton)]
+        self.assertEqual(buttons.count("Export sheets"), 1)
+        actions = [action.text() for action in self.window.work_menu_button.menu().actions()]
+        self.assertIn("Export sheets", actions)
+        self.assertNotIn("Export Excel", actions)
+        self.assertNotIn("Export for master workbook", actions)
+        output = Path(self.temp.name) / "general.xlsx"
+        with patch.object(app_qt.QFileDialog, "getSaveFileName", return_value=(str(output), "Excel (*.xlsx)")):
+            self.window.export_sheets()
+        self.assertTrue(output.exists())
+        with output.open("rb") as stream:
+            self.assertEqual(stream.read(2), b"PK")
 
 
 if __name__ == "__main__":

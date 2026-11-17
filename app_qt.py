@@ -23,6 +23,7 @@ from scoring_assist import assess_all
 from ocr_support import extract_missing_pages, find_tessdata, parse_page_numbers
 from pdf_highlights import keyword_rects
 from verdant.services.master_export import export_master_workbook
+from verdant.services.template_export import export_general_workbook
 from verdant.services.workpaper_transfer import export_workpaper, import_workpaper
 
 
@@ -123,13 +124,13 @@ WORKPAPER_HELP = {
     "Import workpaper (.verdant)": "Merge a shared workpaper after reviewing any decision conflicts.",
     "Find leads": "Search reports for rule-based evidence leads; only saved review decisions count as scores.",
     "Mark items with no hits as Not found": "Confirm bulk Not found decisions for unreviewed items with no extracted-text hits.",
-    "Export Excel": "Export this workpaper's decisions as a long Scores sheet.",
-    "Export for master workbook": "Create a new workbook aligned with the consolidated master layout.",
+    "Export sheets": "Create one new XLSX using the consolidated workbook template and all saved workpapers.",
     "Help for these actions": "Open a popup explaining each workpaper action and button.",
 }
 
 BUTTON_HELP = {
     "Workspaces": WORKPAPER_HELP["Saved workspaces"],
+    "Export sheets": WORKPAPER_HELP["Export sheets"],
     "Add PDFs": WORKPAPER_HELP["Add PDFs"],
     "Find leads": WORKPAPER_HELP["Find leads"],
     "Previous match": "Go to the previous find result (wraps to the last result).",
@@ -146,7 +147,8 @@ BUTTON_HELP = {
     "OCR selected pages": "Choose specific image-only PDF pages for OCR.",
     "Cancel OCR": "Stop OCR after the current page; completed pages stay available.",
     "Review pages": "Open the PDF reader to inspect the matching pages.",
-    "Pin selected passage": "Copy the selected passage and its PDF page into the decision form.",
+    "Pin selected passage": "Add this passage and PDF page to the selected score category; existing pins remain.",
+    "Remove selected pin": "Remove the selected pinned passage from this score category.",
     "Checklist and decisions": "Open the checklist and decision form for the selected item.",
     "Hide manual review": "Show or hide the manual decision controls.",
     "Use lead": "Fill the decision form with the best lead; inspect the source before saving.",
@@ -431,8 +433,7 @@ class Workbench(QMainWindow):
         work_menu.addAction("Import workpaper (.verdant)", self.import_portable_workpaper)
         work_menu.addAction("Find leads", self.find_leads_background)
         work_menu.addAction("Mark items with no hits as Not found", self.bulk_mark_no_hits)
-        work_menu.addSeparator(); work_menu.addAction("Export Excel", self.export_excel)
-        work_menu.addAction("Export for master workbook", self.export_for_master_workbook)
+        work_menu.addSeparator(); work_menu.addAction("Export sheets", self.export_sheets)
         work_menu.addSeparator(); work_menu.addAction("Help for these actions", self.show_help)
         work_menu.setToolTipsVisible(True)
         for action in work_menu.actions():
@@ -462,6 +463,7 @@ class Workbench(QMainWindow):
         row.addWidget(self.button("Workspaces", self.open_saved))
         row.addWidget(self.button("Add PDFs", self.import_pdfs_background))
         row.addWidget(self.button("Find leads", self.find_leads_background))
+        row.addWidget(self.button("Export sheets", self.export_sheets))
         self.controls_panel = controls
         layout.addWidget(controls)
 
@@ -489,6 +491,12 @@ class Workbench(QMainWindow):
         scores_page = QWidget(); scores_layout = QVBoxLayout(scores_page)
         scores_layout.setContentsMargins(4, 10, 4, 4); scores_layout.setSpacing(10)
         self.work_tabs.addTab(scores_page, "Score overview")
+
+        credits_page = QWidget(); credits_layout = QVBoxLayout(credits_page)
+        credits_name = QLabel("Jargon")
+        credits_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        credits_layout.addWidget(credits_name)
+        self.work_tabs.addTab(credits_page, "Credits")
 
         # Score overview page layout
         tiles = QHBoxLayout(); tiles.setSpacing(12)
@@ -741,6 +749,14 @@ class Workbench(QMainWindow):
         self.reader_tabs.addTab(self.extracted_text, "Extracted text")
         rl_ev.addWidget(self.reader_tabs, 3)
 
+        self.reader_pin_label = QLabel("Pinned passages for current category: 0")
+        self.reader_pin_label.setObjectName("muted")
+        rl_ev.addWidget(self.reader_pin_label)
+        self.reader_pins = QListWidget(); self.reader_pins.setMinimumHeight(66)
+        self.reader_pins.setMaximumHeight(110)
+        self.reader_pins.setToolTip("Passages pinned to the selected score category, across PDF files and pages.")
+        rl_ev.addWidget(self.reader_pins)
+
         action_row = QHBoxLayout(); action_row.setSpacing(8)
         self.pin_button = self.button("Pin selected passage", self.pin_hit)
         self.focus_button = self.button("Checklist and decisions", lambda: self.work_tabs.setCurrentIndex(1))
@@ -832,10 +848,16 @@ class Workbench(QMainWindow):
         self.pages = QLineEdit(); self.pages.setPlaceholderText("e.g. 8, 44"); form.addWidget(self.pages)
         form.addWidget(QLabel("Printed page label(s), if shown"))
         self.printed_pages = QLineEdit(); self.printed_pages.setPlaceholderText("Optional page label in the report"); form.addWidget(self.printed_pages)
-        form.addWidget(QLabel("Evidence excerpt / reviewer note"))
+        self.decision_pin_label = QLabel("Pinned passages: 0")
+        form.addWidget(self.decision_pin_label)
+        self.decision_pins = QListWidget(); self.decision_pins.setMinimumHeight(85)
+        self.decision_pins.setToolTip("All pinned passages for this score category. Select one to remove it.")
+        form.addWidget(self.decision_pins)
+        form.addWidget(self.button("Remove selected pin", self.remove_selected_pin))
+        form.addWidget(QLabel("Reviewer note (optional)"))
         self.evidence = QTextEdit(); self.evidence.setMinimumHeight(145)
         self.evidence.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        self.evidence.setPlaceholderText("Record the company-specific passage supporting this decision.")
+        self.evidence.setPlaceholderText("Optional manual note. Leave blank to export a blank value.")
         form.addWidget(self.evidence, 1)
         self.validation = QLabel(); self.validation.setObjectName("hint"); self.validation.setWordWrap(True); form.addWidget(self.validation)
         self.save_button = self.button("Save and next", self.save_and_next, True); form.addWidget(self.save_button)
@@ -944,25 +966,26 @@ class Workbench(QMainWindow):
     def sync_continuous_pdf(self, name, number):
         path = self.doc_paths.get(name)
         if not path: return
-        if self.pdf_loaded_path != str(path):
-            self.pdf_model.close()
-            if self.pdf_buffer:
-                self.pdf_buffer.close(); self.pdf_buffer.deleteLater(); self.pdf_buffer = None
-            if sys.platform == "darwin":
-                # Keep large scanned reports on disk on memory-limited Macs.
-                self.pdf_model.load(str(path))
-            else:
-                self.pdf_buffer = QBuffer(self.pdf_model)
-                self.pdf_buffer.setData(path.read_bytes())
-                self.pdf_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
-                self.pdf_model.load(self.pdf_buffer)
-            self.pdf_loaded_path = str(path)
-        if self.pdf_model.pageCount() > 0 and self.continuous_pdf.pageNavigator().currentPage() != number - 1:
-            self._navigating = True
-            try:
+        was_navigating = self._navigating
+        self._navigating = True
+        try:
+            if self.pdf_loaded_path != str(path):
+                self.pdf_model.close()
+                if self.pdf_buffer:
+                    self.pdf_buffer.close(); self.pdf_buffer.deleteLater(); self.pdf_buffer = None
+                if sys.platform == "darwin":
+                    # Keep large scanned reports on disk on memory-limited Macs.
+                    self.pdf_model.load(str(path))
+                else:
+                    self.pdf_buffer = QBuffer(self.pdf_model)
+                    self.pdf_buffer.setData(path.read_bytes())
+                    self.pdf_buffer.open(QIODevice.OpenModeFlag.ReadOnly)
+                    self.pdf_model.load(self.pdf_buffer)
+                self.pdf_loaded_path = str(path)
+            if self.pdf_model.pageCount() > 0 and self.continuous_pdf.pageNavigator().currentPage() != number - 1:
                 self.continuous_pdf.pageNavigator().jump(number - 1, QPointF(), 0)
-            finally:
-                self._navigating = False
+        finally:
+            self._navigating = was_navigating
 
     def set_status(self, text, state):
         self.status_chip.setText(text); self.status_chip.setProperty("state", state)
@@ -992,11 +1015,11 @@ class Workbench(QMainWindow):
         self.update_validation(); self.refresh_status()
 
     def evidence_missing(self):
-        return [n for n, v in (("document", self.doc_name.text().strip()), ("page", self.pages.text().strip()), ("excerpt", self.evidence.toPlainText().strip())) if not v]
+        return [n for n, v in (("document", self.doc_name.text().strip()), ("page", self.pages.text().strip())) if not v]
 
     def update_validation(self):
         missing = self.evidence_missing() if self.found.isChecked() else []
-        self.validation.setText("Supported needs a " + ", ".join(missing) + " before it can be saved." if missing else "")
+        self.validation.setText("Found needs a " + ", ".join(missing) + " before it can be saved." if missing else "")
         decided = self.found.isChecked() or self.absent.isChecked()
         self.save_button.setEnabled(bool(self.project_id) and decided and not missing)
 
@@ -1072,9 +1095,10 @@ class Workbench(QMainWindow):
         self.absent.setChecked(bool(saved and saved[0] == 0)); self.found.setChecked(bool(saved and saved[0] == 1))
         self.absent.setAutoExclusive(True); self.found.setAutoExclusive(True)
         self.found.setEnabled(not locked or self.found.isChecked())
-        self.doc_name.setText(saved[2] if saved else ""); self.pages.setText(saved[3] if saved else "")
+        self.doc_name.setText((saved[2] or "") if saved else ""); self.pages.setText((saved[3] or "") if saved else "")
         self.printed_pages.setText(self.store.score_records(self.project_id).get(item["id"], {}).get("printed_pages", "") if saved else "")
-        self.evidence.setPlainText(saved[1] if saved else "")
+        self.evidence.setPlainText((saved[1] or "") if saved else "")
+        self.refresh_pins(update_fields=not bool(saved))
         self.search_hits()
         self.saved_form = self.form_state(); self.loading_form = False
         self.update_validation(); self.refresh_status()
@@ -1383,6 +1407,8 @@ class Workbench(QMainWindow):
         self.page_label.setToolTip(full_text)
 
     def pin_hit(self):
+        if not self.project_id or not self.current:
+            return
         row = self.hit_list.currentRow()
         from_extracted = self.reader_tabs.currentIndex() == 1
         selected = self.extracted_text.textCursor().selectedText() if from_extracted else self.preview.textCursor().selectedText()
@@ -1392,8 +1418,57 @@ class Workbench(QMainWindow):
             excerpt = ""
         else:
             name, number, _, excerpt = self.visible_hits[row] if row >= 0 else (*self.page_target, [], "")
-        self.doc_name.setText(name); self.pages.setText(str(number)); self.evidence.setPlainText(selected.replace("\u2029", "\n") if selected else excerpt)
-        self.statusBar().showMessage(f"Pinned {name}, PDF page {number}", 4000)
+            if self.page_target and self.page_target != (name, number):
+                return QMessageBox.information(self, "Select a passage", "This hit belongs to another PDF page. Select text on the current page before pinning.")
+        passage = selected.replace("\u2029", "\n").strip() if selected else excerpt.strip()
+        if not passage:
+            return QMessageBox.information(self, "Select a passage", "Select text in Evidence context or Extracted text before pinning.")
+        printed_page = ""
+        path = self.doc_paths.get(name)
+        if path:
+            try:
+                with fitz.open(path) as pdf:
+                    printed_page = pdf[number - 1].get_label() or ""
+            except Exception:
+                pass
+        self.store.add_evidence_pin(self.project_id, self.current["id"], name, number, passage, printed_page)
+        self.refresh_pins(update_fields=True)
+        self.statusBar().showMessage(f"Pinned {name}, PDF page {number} to {self.current['id']}", 4000)
+
+    def refresh_pins(self, update_fields=False):
+        code = self.current["id"] if self.current else ""
+        pins = self.store.evidence_pins(self.project_id, code) if self.project_id and code else []
+        for listing in (self.reader_pins, self.decision_pins):
+            listing.clear()
+            for pin in pins:
+                snippet = pin["excerpt"].replace("\n", " ")
+                row = QListWidgetItem(f"{pin['document']} · PDF p. {pin['page']} · {snippet[:95]}")
+                row.setData(Qt.ItemDataRole.UserRole, pin["id"])
+                row.setToolTip(pin["excerpt"])
+                listing.addItem(row)
+        self.reader_pin_label.setText(f"Pinned passages for {code}: {len(pins)}")
+        self.decision_pin_label.setText(f"Pinned passages for {code}: {len(pins)}")
+        if update_fields and pins:
+            documents = list(dict.fromkeys(pin["document"] for pin in pins))
+            pages = list(dict.fromkeys(str(pin["page"]) for pin in pins))
+            printed = list(dict.fromkeys(pin["printed_page"] for pin in pins if pin["printed_page"]))
+            self.doc_name.setText("; ".join(documents))
+            self.pages.setText(", ".join(pages))
+            self.printed_pages.setText(", ".join(printed))
+        self.update_validation()
+
+    def remove_selected_pin(self):
+        selected = self.decision_pins.currentItem() or self.reader_pins.currentItem()
+        if not selected or not self.project_id:
+            return
+        pin_id = selected.data(Qt.ItemDataRole.UserRole)
+        self.store.remove_evidence_pin(self.project_id, self.current["id"], pin_id)
+        pins = self.store.evidence_pins(self.project_id, self.current["id"])
+        if pins:
+            self.refresh_pins(update_fields=True)
+        else:
+            self.refresh_pins()
+        self.statusBar().showMessage(f"Removed pin from {self.current['id']}", 4000)
 
     def choose_reports_folder(self):
         root = QFileDialog.getExistingDirectory(self, "Choose reports folder",
@@ -1903,9 +1978,9 @@ class Workbench(QMainWindow):
                 return QMessageBox.information(self, "SDG prerequisite", "Review and save the required earlier stage first.")
             best = lead["hits"][0]
             self.found.setChecked(True)
-            self.doc_name.setText(best["document"])
-            self.pages.setText(str(best["page"]))
-            self.evidence.setPlainText(best["excerpt"])
+            self.store.add_evidence_pin(self.project_id, self.current["id"],
+                                        best["document"], best["page"], best["excerpt"])
+            self.refresh_pins(update_fields=True)
         else:
             self.absent.setChecked(True)
         self.statusBar().showMessage("Lead placed in the form. Inspect the PDF before saving.", 7000)
@@ -1934,14 +2009,14 @@ class Workbench(QMainWindow):
                         QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel, QMessageBox.StandardButton.Cancel)
                     if answer != QMessageBox.StandardButton.Yes: return False
         document = self.doc_name.text().strip(); pages = self.pages.text().strip(); excerpt = self.evidence.toPlainText().strip()
-        if score and not all((document, pages, excerpt)):
-            QMessageBox.warning(self, "Evidence required", "A score of 1 needs a document, page, and excerpt."); return False
+        if score and not all((document, pages)):
+            QMessageBox.warning(self, "Evidence required", "Found (1) needs a document and PDF page. The reviewer note is optional."); return False
         for later in cascade:
             old = scores[f"SDG{self.current['number']}-{later}"]
             code_later = f"SDG{self.current['number']}-{later}"
             printed = self.store.score_records(self.project_id)[code_later].get("printed_pages", "")
             self.store.save_score(self.project_id, code_later, 0, old[1], old[2], old[3], printed_pages=printed)
-        self.store.save_score(self.project_id, code, score, excerpt, document, pages,
+        self.store.save_score(self.project_id, code, score, excerpt or None, document or None, pages or None,
                               printed_pages=self.printed_pages.text().strip())
         self.saved_form = self.form_state()
         self.refresh_totals(); self.render_items(); self.select_item_refresh()
@@ -2109,6 +2184,17 @@ class Workbench(QMainWindow):
         if accepted:
             self.store.set_setting("evidence_page_type", page_type)
 
+    def export_sheets(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Export consolidated sheets",
+            "Verdant_Consolidated_Scores.xlsx", "Excel (*.xlsx)")
+        if not path:
+            return
+        try:
+            output = export_general_workbook(self.store, path)
+        except Exception as exc:
+            return QMessageBox.critical(self, "Export failed", str(exc))
+        self.statusBar().showMessage(f"Exported consolidated workbook: {output}", 8000)
+
     def export_excel(self):
         if not self.project_id: return QMessageBox.warning(self, "Open workpaper", "Open a workpaper first.")
         from openpyxl import Workbook
@@ -2128,6 +2214,13 @@ class Workbench(QMainWindow):
         sheet.freeze_panes = "A2"; sheet.auto_filter.ref = sheet.dimensions
         for column, width in {"A":30, "B":15, "C":14, "D":22, "E":10, "F":10, "G":18, "H":45, "I":15, "J":90}.items():
             sheet.column_dimensions[column].width = width
+        pins_sheet = workbook.create_sheet("Evidence_Pins")
+        pins_sheet.append(["Company", "Fiscal year", "Item", "Document name", "PDF page", "Printed page", "Pinned passage"])
+        for pin in self.store.evidence_pins(self.project_id):
+            pins_sheet.append([company, year, pin["item_id"], pin["document"], pin["page"],
+                               pin["printed_page"] or None, pin["excerpt"]])
+        pins_sheet.freeze_panes = "A2"; pins_sheet.auto_filter.ref = pins_sheet.dimensions
+        pins_sheet.column_dimensions["D"].width = 45; pins_sheet.column_dimensions["G"].width = 90
         try: workbook.save(path)
         except OSError as exc: return QMessageBox.critical(self, "Export failed", str(exc))
         self.statusBar().showMessage(f"Exported {path}", 6000)

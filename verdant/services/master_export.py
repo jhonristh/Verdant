@@ -105,9 +105,17 @@ def build_master_export(store, roster_path=None):
                 value = scores.get(item)
                 if value and value[0] == 1:
                     record = store.score_records(project_id)[item]
-                    page = record["printed_pages"] if page_type == "Printed" and record["printed_pages"] else value[3]
-                    evidence.append([scorer or ticker, int(year), "SDG" if item.startswith("SDG") else "ESG",
-                                     item, value[2], page, value[1], company])
+                    pins = store.evidence_pins(project_id, item)
+                    if pins:
+                        for index, pin in enumerate(pins):
+                            page = pin["printed_page"] if page_type == "Printed" and pin["printed_page"] else pin["page"]
+                            note = f"\nReviewer note: {value[1]}" if index == 0 and value[1] else ""
+                            evidence.append([scorer or ticker, int(year), "SDG" if item.startswith("SDG") else "ESG",
+                                             item, pin["document"], page, pin["excerpt"] + note, company])
+                    else:
+                        page = record["printed_pages"] if page_type == "Printed" and record["printed_pages"] else value[3]
+                        evidence.append([scorer or ticker, int(year), "SDG" if item.startswith("SDG") else "ESG",
+                                         item, value[2], page, value[1], company])
 
     readme.append(["Verdant export for the consolidated master workbook"])
     for line in (

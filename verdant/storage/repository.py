@@ -23,6 +23,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS predictions (project_id INTEGER NOT NULL, item_id TEXT NOT NULL, framework TEXT NOT NULL, weight INTEGER NOT NULL, proposed_score INTEGER NOT NULL, confidence TEXT NOT NULL, result_json TEXT NOT NULL, checked_at TEXT NOT NULL, PRIMARY KEY(project_id,item_id));
             CREATE TABLE IF NOT EXISTS ocr_pages (project_id INTEGER NOT NULL, path TEXT NOT NULL, sha256 TEXT NOT NULL, page_number INTEGER NOT NULL, text TEXT NOT NULL, PRIMARY KEY(project_id,path,page_number));
             CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT NOT NULL);
+            CREATE TABLE IF NOT EXISTS evidence_pins (id INTEGER PRIMARY KEY, project_id INTEGER NOT NULL, item_id TEXT NOT NULL, document_name TEXT NOT NULL, pdf_page INTEGER NOT NULL, excerpt TEXT NOT NULL, printed_page TEXT DEFAULT '', created_at TEXT NOT NULL, UNIQUE(project_id,item_id,document_name,pdf_page,excerpt));
         """)
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(scores)")}
         if "updated_at" not in columns:
@@ -53,7 +54,7 @@ class Store:
 
     def delete_project(self, project_id):
         with self.db:
-            for table in ("audit_log", "scores", "reports", "predictions", "ocr_pages"):
+            for table in ("audit_log", "scores", "reports", "predictions", "ocr_pages", "evidence_pins"):
                 self.db.execute(f"DELETE FROM {table} WHERE project_id=?", (project_id,))
             self.db.execute("DELETE FROM projects WHERE id=?", (project_id,))
         self.sync_csv()
@@ -65,6 +66,37 @@ class Store:
             self.db.execute("INSERT INTO scores(project_id,item_id,score,evidence,document_name,pages,updated_at,printed_pages) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(project_id,item_id) DO UPDATE SET score=excluded.score,evidence=excluded.evidence,document_name=excluded.document_name,pages=excluded.pages,updated_at=excluded.updated_at,printed_pages=excluded.printed_pages", (project_id, item, score, evidence, document, pages, changed_at, printed_pages))
             self.db.execute("INSERT INTO audit_log(project_id,item_id,changed_at,old_score,new_score,document_name,pages,source) VALUES (?,?,?,?,?,?,?,?)", (project_id, item, changed_at, previous[0] if previous else None, score, document, pages, source))
         self.sync_csv()
+
+    def add_evidence_pin(self, project_id, item_id, document, pdf_page, excerpt, printed_page=""):
+        document = str(document).strip()
+        excerpt = str(excerpt).strip()
+        page = int(pdf_page)
+        if not document or page < 1 or not excerpt:
+            raise ValueError("A pin needs a document, PDF page, and selected passage.")
+        with self.db:
+            self.db.execute("""INSERT OR IGNORE INTO evidence_pins
+                (project_id,item_id,document_name,pdf_page,excerpt,printed_page,created_at)
+                VALUES (?,?,?,?,?,?,?)""",
+                (project_id, item_id, document, page, excerpt, str(printed_page or ""), datetime.now().isoformat(timespec="microseconds")))
+        return self.db.execute("""SELECT id FROM evidence_pins WHERE project_id=? AND item_id=?
+            AND document_name=? AND pdf_page=? AND excerpt=?""",
+            (project_id, item_id, document, page, excerpt)).fetchone()[0]
+
+    def evidence_pins(self, project_id, item_id=None):
+        query = "SELECT id,item_id,document_name,pdf_page,excerpt,printed_page,created_at FROM evidence_pins WHERE project_id=?"
+        parameters = [project_id]
+        if item_id is not None:
+            query += " AND item_id=?"
+            parameters.append(item_id)
+        query += " ORDER BY id"
+        return [dict(zip(("id", "item_id", "document", "page", "excerpt", "printed_page", "created_at"), row))
+                for row in self.db.execute(query, parameters)]
+
+    def remove_evidence_pin(self, project_id, item_id, pin_id):
+        with self.db:
+            cursor = self.db.execute("DELETE FROM evidence_pins WHERE project_id=? AND item_id=? AND id=?",
+                                     (project_id, item_id, pin_id))
+        return cursor.rowcount > 0
 
     def scores(self, project_id):
         return {row[0]: row[1:] for row in self.db.execute("SELECT item_id,score,evidence,document_name,pages FROM scores WHERE project_id=?", (project_id,))}

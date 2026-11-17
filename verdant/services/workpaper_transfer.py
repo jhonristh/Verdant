@@ -36,7 +36,9 @@ def export_workpaper(store, project_id, destination):
                "SELECT path,sha256,page_number,text FROM ocr_pages WHERE project_id=?", (project_id,))]
     payload = {"format": 1, "company": project[0], "fiscal_year": project[1],
                "scores": store.score_records(project_id), "reports": reports,
-               "audit": audit, "ocr": ocr}
+               "audit": audit, "ocr": ocr,
+               "pins": [{key: value for key, value in pin.items() if key != "id"}
+                        for pin in store.evidence_pins(project_id)]}
     with ZipFile(destination, "w", ZIP_DEFLATED) as archive:
         archive.writestr("workpaper.json", json.dumps(payload, ensure_ascii=False))
     return Path(destination)
@@ -96,6 +98,12 @@ def import_workpaper(store, source, accept_newer=False):
         for page in payload.get("ocr", []):
             store.db.execute("""INSERT OR IGNORE INTO ocr_pages(project_id,path,sha256,page_number,text)
                 VALUES (?,?,?,?,?)""", (project_id, page["path"], page["sha256"], page["page"], page["text"]))
+        for pin in payload.get("pins", []):
+            store.db.execute("""INSERT OR IGNORE INTO evidence_pins
+                (project_id,item_id,document_name,pdf_page,excerpt,printed_page,created_at)
+                VALUES (?,?,?,?,?,?,?)""",
+                (project_id, pin["item_id"], pin["document"], pin["page"], pin["excerpt"],
+                 pin.get("printed_page", ""), pin.get("created_at", "1970-01-01T00:00:00")))
     store.clear_predictions(project_id)
     store.sync_csv()
     return {"imported": True, "project_id": project_id, "conflicts": conflicts}

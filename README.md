@@ -14,7 +14,9 @@ The first-run setup asks for a reports folder, scorer name, and optional roster 
 
 Choose both a company and a fiscal year to open a workpaper; no fiscal year is preselected. Hover over buttons or Workpaper menu actions for brief guidance, or click **? Help** for a searchable button guide.
 
-**Find leads** offers rule-based passages for review. It does not assign confirmed points. Each Found (1) decision needs a document, PDF page, and excerpt. In the Workpaper menu, choose **Scorer name and evidence page setting** to select PDF or printed page references for exports. The master workbook export creates a new file; it does not modify the supplied consolidated workbook.
+**Find leads** offers rule-based passages for review. It does not assign confirmed points. Each Found (1) decision needs a document and PDF page. In the Workpaper menu, choose **Scorer name and evidence page setting** to select PDF or printed page references for exports. The workbook export creates a new file; it does not modify the supplied consolidated workbook.
+
+The reviewer note is optional and stays blank in saved data and exports when left empty. **Pin selected passage** adds passages from different PDF pages or reports to the currently selected score item; the pinned list appears in both the PDF reader and decision form. **Export sheets** creates one new copy of the consolidated workbook template with saved decisions and one evidence row per pinned passage. The template itself is never overwritten.
 
 ## Project layout
 
