@@ -283,7 +283,7 @@ class Workbench(QMainWindow):
         work_menu.addAction("Import roster...", self.import_roster)
         work_menu.addAction("Export workpaper (.verdant)", self.export_portable_workpaper)
         work_menu.addAction("Import workpaper (.verdant)", self.import_portable_workpaper)
-        work_menu.addAction("Check for score", self.check_for_score)
+        work_menu.addAction("Find leads", self.check_for_score)
         work_menu.addSeparator(); work_menu.addAction("Export Excel", self.export_excel)
         work_menu.addAction("Export for master workbook", self.export_for_master_workbook)
 
@@ -305,7 +305,7 @@ class Workbench(QMainWindow):
         self.year.setToolTip("Fiscal year covered by the report, not the publication year"); row.addWidget(self.year, 1)
         row.addWidget(self.button("Workspaces", self.open_saved))
         row.addWidget(self.button("Add PDFs", self.import_pdfs))
-        row.addWidget(self.button("Check for score", self.check_for_score))
+        row.addWidget(self.button("Find leads", self.check_for_score))
         row.addWidget(self.button("Export Excel", self.export_excel))
         row.addWidget(self.button("Export for master workbook", self.export_for_master_workbook))
         self.controls_panel = controls
@@ -317,7 +317,7 @@ class Workbench(QMainWindow):
         layout.addWidget(self.work_tabs, 1)
 
         # Corner widget in tab bar for score summary
-        self.review_score_strip = self.button("Proposed ESG —/30 · SDG —/102  |  Score overview", lambda: self.work_tabs.setCurrentIndex(2))
+        self.review_score_strip = self.button("Reviewed 0/81 · Supported 0/81 | Score overview", lambda: self.work_tabs.setCurrentIndex(2))
         self.review_score_strip.setObjectName("cornerStrip")
         self.work_tabs.setCornerWidget(self.review_score_strip, Qt.Corner.TopRightCorner)
 
@@ -338,9 +338,9 @@ class Workbench(QMainWindow):
 
         # Score overview page layout
         tiles = QHBoxLayout(); tiles.setSpacing(12)
-        self.esg_tile = Tile("Proposed ESG", 30, "Automated · financial materiality")
-        self.sdg_tile = Tile("Proposed SDG", 102, "Automated · weighted impact points")
-        self.reviewed_tile = Tile("Manually reviewed", len(self.items), "Optional confirmed decisions")
+        self.esg_tile = Tile("Items with leads", len(self.items), "Evidence to inspect")
+        self.sdg_tile = Tile("Supported (reviewed)", len(self.items), "Saved decisions only")
+        self.reviewed_tile = Tile("Reviewed", len(self.items), "Saved decisions")
         for tile in (self.esg_tile, self.sdg_tile, self.reviewed_tile): tiles.addWidget(tile, 1)
         self.progress = self.reviewed_tile.bar
         scores_layout.addLayout(tiles)
@@ -550,7 +550,7 @@ class Workbench(QMainWindow):
         self.terms.setFixedHeight(20)
         rl_ev.addWidget(self.terms)
 
-        self.score_hint = QLabel("Import PDFs, then click Check for score to see rule-based leads.")
+        self.score_hint = QLabel("Import PDFs, then click Find leads to inspect rule-based evidence.")
         self.score_hint.setObjectName("hint"); self.score_hint.setWordWrap(True)
         rl_ev.addWidget(self.score_hint)
 
@@ -652,7 +652,7 @@ class Workbench(QMainWindow):
         for label in self.stage_rows: label.setTextFormat(Qt.TextFormat.RichText); sb.addWidget(label)
         self.stage_total = QLabel(); self.stage_total.setObjectName("muted"); sb.addWidget(self.stage_total)
         rl.addWidget(self.stage_box)
-        self.prediction = QLabel("Run Check for score to see a proposed score and source passage.")
+        self.prediction = QLabel("Run Find leads to see a source passage.")
         self.prediction.setObjectName("prediction"); self.prediction.setWordWrap(True); rl.addWidget(self.prediction)
         self.review_toggle = self.button("Hide manual review", lambda: None)
         self.review_toggle.setCheckable(True); self.review_toggle.setChecked(True)
@@ -660,10 +660,10 @@ class Workbench(QMainWindow):
         self.manual_box = QWidget(); form = QVBoxLayout(self.manual_box)
         form.setContentsMargins(0, 0, 0, 0); form.setSpacing(8)
         options = QHBoxLayout()
-        self.absent = QRadioButton("Not supported \u00b7 0"); self.found = QRadioButton("Supported \u00b7 1")
+        self.absent = QRadioButton("Not found (0)"); self.found = QRadioButton("Found (1)")
         options.addWidget(self.absent); options.addWidget(self.found); form.addLayout(options)
         self.stage_context = QLabel(); self.stage_context.setObjectName("muted"); self.stage_context.setWordWrap(True); form.addWidget(self.stage_context)
-        self.apply_prediction_button = self.button("Use proposed score", self.apply_prediction)
+        self.apply_prediction_button = self.button("Use lead", self.apply_prediction)
         self.apply_prediction_button.setEnabled(False); form.addWidget(self.apply_prediction_button)
         form.addWidget(QLabel("Evidence document"))
         self.doc_name = QLineEdit(); self.doc_name.setPlaceholderText("Select a hit or enter the document name"); form.addWidget(self.doc_name)
@@ -676,6 +676,7 @@ class Workbench(QMainWindow):
         form.addWidget(self.evidence, 1)
         self.validation = QLabel(); self.validation.setObjectName("hint"); self.validation.setWordWrap(True); form.addWidget(self.validation)
         self.save_button = self.button("Save and next", self.save_and_next, True); form.addWidget(self.save_button)
+        form.addWidget(self.button("Next with a lead", self.next_with_lead))
         rl.addWidget(self.manual_box, 1)
         self.review_toggle.toggled.connect(self.toggle_manual_review)
 
@@ -701,7 +702,16 @@ class Workbench(QMainWindow):
         save_action = QAction(self); save_action.setShortcut(QKeySequence.StandardKey.Save)
         save_action.triggered.connect(self.save); self.addAction(save_action)
         next_action = QAction(self); next_action.setShortcut("Alt+Right")
-        next_action.triggered.connect(self.next_item); self.addAction(next_action)
+        next_action.triggered.connect(self.save_and_next); self.addAction(next_action)
+        for key, callback in (("Y", lambda: self.found.setChecked(True)),
+                              ("N", lambda: self.absent.setChecked(True)),
+                              ("Ctrl+F", lambda: self.pdf_search.setFocus()),
+                              ("F3", lambda: self.find_pdf_text(1))):
+            action = QAction(self); action.setShortcut(key); action.triggered.connect(callback); self.addAction(action)
+        self.found.setToolTip("Found (1) · Y")
+        self.absent.setToolTip("Not found (0) · N")
+        self.save_button.setToolTip("Save and next unreviewed · Alt+Right")
+        self.pdf_search.setToolTip("Find in PDF · Ctrl+F; next match · F3")
         QWidget.setTabOrder(self.filter, self.item_list)
 
     # ---- state helpers -------------------------------------------------
@@ -905,12 +915,12 @@ class Workbench(QMainWindow):
 
     def update_prediction(self, item):
         lead = self.suggestions.get(item["id"])
-        self.score_hint.setText((lead["label"] + ". " + lead["reason"]) if lead else "Import PDFs, then click Check for score to see proposed scores.")
+        self.score_hint.setText((lead["label"] + ". " + lead["reason"]) if lead else "Import PDFs, then click Find leads.")
         if lead:
             best = lead["hits"][0] if lead["hits"] else None
             source = f"\nBest hit: {best['document']}, PDF p. {best['page']}" if best else "\nNo matching extractable passage"
             self.prediction.setText(f"{lead['label']}  ·  {item['weight'] * lead['suggestion']} proposed point(s)\n{lead['reason']}{source}")
-        else: self.prediction.setText("Run Check for score to see a proposed score and source passage.")
+        else: self.prediction.setText("Run Find leads to see a source passage.")
         self.apply_prediction_button.setEnabled(bool(lead and self.project_id))
 
     def form_state(self):
@@ -1572,7 +1582,7 @@ class Workbench(QMainWindow):
                 progress.setLabelText(f"Checking {code} · {done}/{total}")
                 progress.setValue(done)
                 if progress.wasCanceled(): raise OperationCancelled()
-            results = assess_all(self.items, eligible, advance)
+            results = assess_all(self.items, eligible, advance, self.active_company)
         except OperationCancelled:
             self.statusBar().showMessage("Score check canceled; previous proposals were kept.", 8000)
             return
@@ -1580,13 +1590,12 @@ class Workbench(QMainWindow):
             progress.close(); self.busy = False
         self.suggestions = results
         self.store.save_predictions(self.project_id, self.items, self.suggestions)
-        esg = sum(self.suggestions[item["id"]]["suggestion"] for item in self.items if item["kind"] == "ESG")
-        sdg = sum(item["weight"] * self.suggestions[item["id"]]["suggestion"] for item in self.items if item["kind"] == "SDG")
+        leads = sum(result["suggestion"] for result in self.suggestions.values())
         self.skipped_reports = len(skipped)
         self.review_toggle.setChecked(False)
         self.update_prediction(self.current)
         self.refresh_totals(); self.render_items()
-        self.statusBar().showMessage(f"Proposed scores saved: ESG {esg}/30 · SDG {sdg}/102. Review manually when needed.", 15000)
+        self.statusBar().showMessage(f"Found {leads} items with leads. All decisions require reviewer approval.", 15000)
 
     def apply_prediction(self):
         lead = self.suggestions.get(self.current["id"])
@@ -1601,7 +1610,7 @@ class Workbench(QMainWindow):
             self.evidence.setPlainText(best["excerpt"])
         else:
             self.absent.setChecked(True)
-        self.statusBar().showMessage("Proposed score placed in the form. Inspect the PDF before saving.", 7000)
+        self.statusBar().showMessage("Lead placed in the form. Inspect the PDF before saving.", 7000)
 
     # ---- saving --------------------------------------------------------
     def save(self):
@@ -1655,7 +1664,25 @@ class Workbench(QMainWindow):
         self.update_validation(); self.refresh_status()
 
     def save_and_next(self):
-        if self.save(): self.next_item()
+        if self.save(): self.next_unreviewed()
+
+    def next_unreviewed(self):
+        scores = self.all_scores()
+        start = self.items.index(self.current)
+        for offset in range(1, len(self.items) + 1):
+            item = self.items[(start + offset) % len(self.items)]
+            if item["id"] not in scores:
+                self.select_item(item); return
+        self.statusBar().showMessage("All items have been reviewed.", 5000)
+
+    def next_with_lead(self):
+        scores = self.all_scores()
+        start = self.items.index(self.current)
+        for offset in range(1, len(self.items) + 1):
+            item = self.items[(start + offset) % len(self.items)]
+            if item["id"] not in scores and self.suggestions.get(item["id"], {}).get("suggestion") == 1:
+                self.select_item(item); return
+        self.statusBar().showMessage("No unreviewed items with leads.", 5000)
 
     def next_item(self):
         index = self.items.index(self.current)
@@ -1667,31 +1694,27 @@ class Workbench(QMainWindow):
         manual_esg = sum(value[0] for key, value in scores.items() if not key.startswith("SDG"))
         manual_sdg = sum(value[0] * weights[key] for key, value in scores.items() if key.startswith("SDG"))
         if len(self.suggestions) == len(self.items):
-            esg = sum(self.suggestions[item["id"]]["suggestion"] for item in self.items if item["kind"] == "ESG")
-            sdg = sum(item["weight"] * self.suggestions[item["id"]]["suggestion"] for item in self.items if item["kind"] == "SDG")
-            self.esg_tile.set_value(esg); self.sdg_tile.set_value(sdg)
+            self.esg_tile.set_value(sum(result["suggestion"] for result in self.suggestions.values()))
             low = sum(result["confidence"] == "low" for result in self.suggestions.values())
             skipped = f" · {self.skipped_reports} other-year PDF(s) skipped" if self.skipped_reports else ""
             unreadable = sum(len(numbers) for _, _, numbers in self.ocr_tasks)
             ocr_note = f" · {unreadable} page(s) still need OCR" if unreadable else ""
-            self.prediction_totals.setText(f"Automated proposal for this company and FY · {low} low-confidence items{skipped}{ocr_note} · Manual confirmed: ESG {manual_esg}/30, SDG {manual_sdg}/102 · Readable CSV: data/scores_readable.csv")
+            self.prediction_totals.setText(f"Rule-based leads for this company and FY · {low} low-confidence items{skipped}{ocr_note} · Manual confirmed: ESG {manual_esg}/30, SDG {manual_sdg}/102")
             self.prediction_totals.show()
         else:
-            self.esg_tile.set_value(0); self.sdg_tile.set_value(0)
-            self.esg_tile.value.setText("— / 30"); self.sdg_tile.value.setText("— / 102")
-            self.prediction_totals.setText(f"Run Check for score to calculate automated totals for this company and FY. Manual confirmed: ESG {manual_esg}/30, SDG {manual_sdg}/102")
+            self.esg_tile.set_value(0)
+            self.prediction_totals.setText(f"Run Find leads to inspect evidence for this company and FY. Manual confirmed: ESG {manual_esg}/30, SDG {manual_sdg}/102")
             self.prediction_totals.setVisible(bool(self.project_id))
         self.reviewed_tile.set_value(len(scores))
-        esg = self.esg_tile.value.text().split(" / ")[0]
-        sdg = self.sdg_tile.value.text().split(" / ")[0]
-        self.review_score_strip.setText(f"Proposed ESG {esg}/30 · SDG {sdg}/102  |  Score overview")
+        self.sdg_tile.set_value(sum(value[0] for value in scores.values()))
+        self.review_score_strip.setText(f"Reviewed {len(scores)}/81 · Supported {self.sdg_tile.value.text()} · ESG {manual_esg}/30 · SDG {manual_sdg}/102  |  Score overview")
         if self.work_tabs.currentIndex() == 2:
             self.populate_score_tree(self.score_tree)
         self.refresh_status()
 
     def configure_score_tree(self, tree):
         tree.setColumnCount(5)
-        tree.setHeaderLabels(["Category / scoring item", "Proposed", "Confidence", "Manual", "Matched pages"])
+        tree.setHeaderLabels(["Category / scoring item", "Lead", "Confidence", "Manual", "Matched pages"])
         tree.setAlternatingRowColors(True)
         tree.setColumnWidth(0, 440); tree.setColumnWidth(1, 105)
         tree.setColumnWidth(2, 115); tree.setColumnWidth(3, 115)
@@ -1740,7 +1763,7 @@ class Workbench(QMainWindow):
         box = QVBoxLayout(dialog); box.setContentsMargins(16, 16, 16, 16); box.setSpacing(10)
         title = QLabel(f"{self.active_company or self.company.currentText()} · FY {self.active_year or self.year.currentText()}")
         title.setObjectName("heading"); box.addWidget(title)
-        caption = QLabel("Proposed points come from PDF text. Manual points count only saved reviewer decisions. Expand a category to inspect every item.")
+        caption = QLabel("Leads come from PDF text. Manual points count only saved reviewer decisions. Expand a category to inspect every item.")
         caption.setObjectName("muted"); caption.setWordWrap(True); box.addWidget(caption)
         tree = QTreeWidget(); self.configure_score_tree(tree)
         box.addWidget(tree, 1)

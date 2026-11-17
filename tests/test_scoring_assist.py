@@ -4,6 +4,20 @@ from scoring_assist import assess_item, assess_all
 
 
 class SuggestionTests(unittest.TestCase):
+    def test_contents_bare_mention_and_strong_passage(self):
+        item = {"id": "E1", "kind": "ESG", "keywords": ["electricity"]}
+        pages = ["Table of contents electricity ................ 12",
+                 "Electricity is important in the industry in 2022. See page 13.",
+                 "Our electricity reduction program saved 12% of use this year."]
+        result = assess_item(item, [("report.pdf", pages)])
+        self.assertEqual(result["suggestion"], 1)
+        self.assertEqual(result["hits"][0]["page"], 3)
+        self.assertFalse(result["hits"][1]["strong"])
+
+    def test_sdg_list_is_not_a_lead(self):
+        item = {"id": "SDG3-Identified", "kind": "SDG", "stage": "Identified", "number": 3, "keywords": ["SDG 3"]}
+        result = assess_item(item, [("report.pdf", ["Our SDGs 3, 4 and 8 are shown on page 3."])])
+        self.assertEqual(result["suggestion"], 0)
     def test_no_hit_proposes_low_confidence_zero(self):
         item={"id":"E2","kind":"ESG","keywords":["energy cost"]}
         result=assess_item(item,[("report.pdf",["Nothing relevant here."])])
