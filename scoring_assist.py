@@ -7,7 +7,7 @@ FIGURE = re.compile(r"(?<![\w.])(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)\s*(?:%(?!\w
 PROGRAM = re.compile(r"\b(?:[A-Za-z][\w&-]+\s+){1,4}(?:Program|Programme|Committee|Board|Policy|Initiative|Team|Department|Division|Fund)\b", re.I)
 COMPANY_CUE = re.compile(r"\b(?:the company|we|our|us|the group|our group)\b", re.I)
 CONTENTS = re.compile(r"\b(?:table of contents|contents|index)\b", re.I)
-SDG_LIST = re.compile(r"\bSDGs?\s*\d{1,2}(?:\s*[,/&]|\s+and\s+)\s*\d{1,2}", re.I)
+SDG_LIST = re.compile(r"\bSDGs?[\s-]*\d{1,2}(?:\s*[,/&]|\s+and\s+)\s*\d{1,2}", re.I)
 SDG_CUES = {
     "Identified": re.compile(r"\b(?:SDG|sustainable development goal)\s*\d{1,2}\b", re.I),
     "Managed": re.compile(r"\b(?:target|KPI|program|initiative|budget|team|committee)\b", re.I),
@@ -41,7 +41,10 @@ def assess_item(item, documents, company_name=""):
             if item["kind"] == "SDG":
                 stage_cue = bool(SDG_CUES[item["stage"]].search(passage))
                 if item["stage"] == "Identified":
-                    stage_cue = bool(re.search(rf"\b(?:SDG|sustainable development goal)\s*{item['number']}\b", passage, re.I))
+                    number_cue = bool(re.search(rf"\b(?:SDG|sustainable development goal)[\s-]*{item['number']}\b", passage, re.I))
+                    title = item.get("title", "").rsplit(": ", 1)[0]
+                    title_cue = bool(title and keyword_pattern(title).search(passage))
+                    stage_cue = number_cue or title_cue
             strong = specific and concrete and stage_cue and not list_only and not index_page
             reason = ("Company-specific passage with a figure or named program/body." if strong else
                       "Contents or index page." if index_page else

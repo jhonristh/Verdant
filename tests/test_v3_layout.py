@@ -400,11 +400,12 @@ class V3LayoutTests(unittest.TestCase):
         for button in self.window.findChildren(app_qt.QPushButton):
             self.assertTrue(button.toolTip(), button.text())
 
-    def test_credits_page_contains_only_name(self):
-        index = next(index for index in range(self.window.work_tabs.count())
-                     if self.window.work_tabs.tabText(index) == "Credits")
-        page = self.window.work_tabs.widget(index)
-        self.assertEqual([label.text() for label in page.findChildren(app_qt.QLabel)], ["Jargon"])
+    def test_credit_is_last_strip_in_help_popup(self):
+        self.assertNotIn("Credits", [self.window.work_tabs.tabText(index)
+                                     for index in range(self.window.work_tabs.count())])
+        self.window.show_help()
+        labels = self.window.help_dialog.findChildren(app_qt.QLabel)
+        self.assertEqual(labels[-1].text(), "tool made by jargon")
 
     def test_one_general_spreadsheet_export_control(self):
         buttons = [button.text() for button in self.window.controls_panel.findChildren(app_qt.QPushButton)]

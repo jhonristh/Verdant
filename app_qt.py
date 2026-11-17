@@ -24,6 +24,7 @@ from ocr_support import extract_missing_pages, find_tessdata, parse_page_numbers
 from pdf_highlights import keyword_rects
 from verdant.services.master_export import export_master_workbook
 from verdant.services.template_export import export_general_workbook
+from verdant.domain.rubric import build_items
 from verdant.services.workpaper_transfer import export_workpaper, import_workpaper
 
 
@@ -169,13 +170,7 @@ BUTTON_HELP = {
 
 
 def make_items():
-    items = [{**item, "kind":"ESG", "weight":1} for item in RUBRIC["esg"]]
-    for number,title,terms in RUBRIC["sdgs"]:
-        for stage,weight in RUBRIC["sdg_weights"].items():
-            items.append({"id":f"SDG{number}-{stage}","kind":"SDG","pillar":f"SDG {number}",
-                          "title":f"{title}: {stage}","keywords":[part.strip() for part in terms.split(",")],
-                          "weight":weight,"stage":stage,"number":number})
-    return items
+    return build_items(RUBRIC)
 
 
 class OCRWorker(QThread):
@@ -389,6 +384,10 @@ class Workbench(QMainWindow):
         listing.setCurrentRow(0)
         row.addWidget(listing, 2); row.addWidget(detail, 3); outer.addLayout(row)
         outer.addWidget(self.button("Close", dialog.close))
+        credit = QLabel("tool made by jargon")
+        credit.setObjectName("muted")
+        credit.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        outer.addWidget(credit)
         self.help_dialog = dialog
         dialog.show()
 
@@ -491,12 +490,6 @@ class Workbench(QMainWindow):
         scores_page = QWidget(); scores_layout = QVBoxLayout(scores_page)
         scores_layout.setContentsMargins(4, 10, 4, 4); scores_layout.setSpacing(10)
         self.work_tabs.addTab(scores_page, "Score overview")
-
-        credits_page = QWidget(); credits_layout = QVBoxLayout(credits_page)
-        credits_name = QLabel("Jargon")
-        credits_name.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        credits_layout.addWidget(credits_name)
-        self.work_tabs.addTab(credits_page, "Credits")
 
         # Score overview page layout
         tiles = QHBoxLayout(); tiles.setSpacing(12)

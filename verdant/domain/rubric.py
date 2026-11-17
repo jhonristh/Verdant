@@ -11,9 +11,18 @@ def load_rubric(path=RUBRIC_PATH):
 
 
 def keyword_pattern(keyword):
-    escaped = re.escape(keyword)
+    number = re.fullmatch(r"SDG\s*(\d{1,2})", keyword, re.I)
+    if number:
+        return re.compile(rf"(?<!\w)SDGs?[\s-]*{number.group(1)}(?!\d)", re.I)
+    escaped = re.escape(keyword.strip()).replace(r"\ ", r"\s+").replace(r"\-", r"[-\s]+")
     flags = 0 if keyword.isupper() and len(keyword) <= 5 else re.I
     return re.compile(rf"(?<!\w){escaped}(?!\w)", flags)
+
+
+def sdg_keywords(number, title, terms):
+    """Use the goal number, official title, and every rubric topic term."""
+    words = [f"SDG {number}", title, *(part.strip() for part in terms.split(","))]
+    return list(dict.fromkeys(word for word in words if word))
 
 
 def build_items(rubric=None):
@@ -23,6 +32,6 @@ def build_items(rubric=None):
         for stage, weight in rubric["sdg_weights"].items():
             items.append({"id": f"SDG{number}-{stage}", "kind": "SDG", "pillar": f"SDG {number}",
                           "title": f"{title}: {stage}",
-                          "keywords": [part.strip() for part in terms.split(",")],
+                          "keywords": sdg_keywords(number, title, terms),
                           "weight": weight, "stage": stage, "number": number})
     return items

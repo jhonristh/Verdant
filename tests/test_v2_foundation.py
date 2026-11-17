@@ -329,6 +329,7 @@ class FoundationTests(unittest.TestCase):
         self.window.store.add_report(project,pdf_path,digest,1,1)
         self.window.project_id=project; self.window.active_company="Test PLC"; self.window.active_year="2022"
         self.window.company.addItem("Test PLC"); self.window.company.setCurrentText("Test PLC")
+        self.window.year.setCurrentText("2022")
         self.window.load_reports()
         self.assertEqual(len(self.window.ocr_tasks),1)
         with patch.object(QMessageBox,"warning") as warning:
