@@ -9,8 +9,8 @@ RUBRIC = load_rubric()
 DB_PATH = DATABASE_PATH
 
 
-def load_companies():
-    roster_path = next((path for path in ROSTER_PATHS if path.exists()), None)
+def load_companies(roster_path=None):
+    roster_path = roster_path or next((path for path in ROSTER_PATHS if path.exists()), None)
     if roster_path is None:
         return []
     workbook = load_workbook(roster_path, read_only=True, data_only=True)

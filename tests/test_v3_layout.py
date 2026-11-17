@@ -273,6 +273,14 @@ class V3LayoutTests(unittest.TestCase):
         self.window.select_item(next(item for item in self.window.items if item["id"] == "SDG9-Reported"))
         self.assertIn("6 / 6", self.window.stage_total.text())
 
+    def test_selecting_company_opens_workpaper_without_open_button(self):
+        self.window.companies.append("Test PLC")
+        self.window.company.addItem("Test PLC")
+        self.window.company.setCurrentText("Test PLC")
+        self.window.company.activated.emit(self.window.company.currentIndex())
+        self.assertEqual(self.window.active_company, "Test PLC")
+        self.assertEqual(self.window.active_year, "2022")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -1,6 +1,7 @@
 """Qt review workbench for the ESG/SDG disclosure scorer."""
 import hashlib
 import re
+import shutil
 import sys
 from collections import OrderedDict
 from html import escape
@@ -22,6 +23,7 @@ from scoring_assist import assess_all
 from ocr_support import extract_missing_pages, find_tessdata, parse_page_numbers
 from pdf_highlights import keyword_rects
 from verdant.services.master_export import export_master_workbook
+from verdant.services.workpaper_transfer import export_workpaper, import_workpaper
 
 
 STYLE = """
@@ -212,8 +214,11 @@ class Workbench(QMainWindow):
         self.zoom_scale = 1.0
         self.ocr_failed_pages = set()
         self.ocr_current = None
+        self.pending_selection = None
         self.settings = QSettings(str(DATA_DIR / "viewer.ini"), QSettings.Format.IniFormat)
         self.build_ui()
+        self.company.activated.connect(lambda *_: self.open_project())
+        self.year.activated.connect(lambda *_: self.open_project())
         saved_geom = self.settings.value("geometry")
         if saved_geom:
             self.restoreGeometry(saved_geom)
@@ -271,9 +276,13 @@ class Workbench(QMainWindow):
 
         work_menu = QMenu(self)
         work_menu.addAction("Choose company and fiscal year", lambda: self.controls_panel.setVisible(True))
-        work_menu.addAction("Open workpaper", self.open_project)
         work_menu.addAction("Saved workspaces", self.open_saved)
         work_menu.addAction("Add PDFs", self.import_pdfs)
+        work_menu.addAction("Choose reports folder", self.choose_reports_folder)
+        work_menu.addAction("Relink missing PDF", self.relink_missing_pdf)
+        work_menu.addAction("Import roster...", self.import_roster)
+        work_menu.addAction("Export workpaper (.verdant)", self.export_portable_workpaper)
+        work_menu.addAction("Import workpaper (.verdant)", self.import_portable_workpaper)
         work_menu.addAction("Check for score", self.check_for_score)
         work_menu.addSeparator(); work_menu.addAction("Export Excel", self.export_excel)
         work_menu.addAction("Export for master workbook", self.export_for_master_workbook)
@@ -294,7 +303,6 @@ class Workbench(QMainWindow):
         self.company.setMinimumWidth(260); self.company.setAccessibleName("Company"); row.addWidget(self.company, 3)
         self.year = QComboBox(); self.year.addItems(["2022", "2023", "2024", "2025"]); self.year.setAccessibleName("Fiscal year covered")
         self.year.setToolTip("Fiscal year covered by the report, not the publication year"); row.addWidget(self.year, 1)
-        row.addWidget(self.button("Open workpaper", self.open_project, True))
         row.addWidget(self.button("Workspaces", self.open_saved))
         row.addWidget(self.button("Add PDFs", self.import_pdfs))
         row.addWidget(self.button("Check for score", self.check_for_score))
@@ -1196,13 +1204,102 @@ class Workbench(QMainWindow):
         self.doc_name.setText(name); self.pages.setText(str(number)); self.evidence.setPlainText(selected.replace("\u2029", "\n") if selected else excerpt)
         self.statusBar().showMessage(f"Pinned {name}, PDF page {number}", 4000)
 
+    def choose_reports_folder(self):
+        root = QFileDialog.getExistingDirectory(self, "Choose reports folder",
+            str(self.store.reports_root() or Path.home()))
+        if not root: return
+        try: self.store.set_reports_root(root)
+        except Exception as exc: return QMessageBox.warning(self, "Reports folder", str(exc))
+        if self.project_id: self.load_reports()
+        self.statusBar().showMessage(f"Reports folder: {root}", 8000)
+
+    def relink_missing_pdf(self):
+        if not self.project_id: return QMessageBox.information(self, "Workpaper", "Select a company and fiscal year first.")
+        missing = [(path, digest) for path, digest, _, _ in self.store.reports(self.project_id) if not Path(path).exists()]
+        if not missing: return QMessageBox.information(self, "Reports", "No missing PDFs in this workpaper.")
+        labels = [f"{Path(path).name}  [{digest[:12]}]" for path, digest in missing]
+        label, ok = QInputDialog.getItem(self, "Relink missing PDF", "Missing report", labels, 0, False)
+        if not ok: return
+        old, digest = missing[labels.index(label)]
+        candidate, _ = QFileDialog.getOpenFileName(self, "Locate replacement PDF", str(self.store.reports_root() or Path.home()), "PDF files (*.pdf)")
+        if not candidate: return
+        actual = hashlib.sha256(Path(candidate).read_bytes()).hexdigest()
+        allow_name = False
+        if actual != digest:
+            if Path(candidate).name.casefold() != Path(old).name.casefold():
+                return QMessageBox.warning(self, "PDF mismatch", "Neither the file hash nor filename matches the missing report.")
+            allow_name = QMessageBox.question(self, "PDF changed",
+                "The filename matches but SHA-256 differs. Relinking will discard cached OCR and score leads for this PDF. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel) == QMessageBox.StandardButton.Yes
+            if not allow_name: return
+        try: method = self.store.relink_report(self.project_id, old, candidate, allow_name)
+        except Exception as exc: return QMessageBox.warning(self, "Relink failed", str(exc))
+        self.load_reports(); self.statusBar().showMessage(f"Relinked by {method}: {Path(candidate).name}", 8000)
+
+    def import_roster(self):
+        source, _ = QFileDialog.getOpenFileName(self, "Import company roster", "", "Excel (*.xlsx)")
+        if not source: return
+        try:
+            names = load_companies(Path(source))
+            if not names: raise ValueError("The Companies sheet has no company names in column C from row 4.")
+            destination = DATA_DIR / "roster.xlsx"
+            if Path(source).resolve() != destination.resolve(): shutil.copy2(source, destination)
+        except Exception as exc: return QMessageBox.warning(self, "Roster import failed", str(exc))
+        self.companies = names
+        selected = self.company.currentText()
+        self.company.blockSignals(True); self.company.clear(); self.company.addItem("Select a company")
+        self.company.addItems(names)
+        if selected in names: self.company.setCurrentText(selected)
+        self.company.blockSignals(False)
+        self.statusBar().showMessage(f"Imported roster with {len(names)} companies.", 8000)
+
+    def export_portable_workpaper(self):
+        if not self.project_id: return QMessageBox.information(self, "Workpaper", "Select a company and fiscal year first.")
+        company = self.active_company.replace("/", "-").replace("\\", "-")
+        path, _ = QFileDialog.getSaveFileName(self, "Export workpaper",
+            f"{company}_{self.active_year}.verdant", "Verdant workpaper (*.verdant)")
+        if not path: return
+        try: export_workpaper(self.store, self.project_id, path)
+        except Exception as exc: return QMessageBox.warning(self, "Export failed", str(exc))
+        self.statusBar().showMessage(f"Exported workpaper: {path}", 8000)
+
+    def import_portable_workpaper(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Import workpaper", "", "Verdant workpaper (*.verdant)")
+        if not path: return
+        if not self.store.reports_root():
+            self.choose_reports_folder()
+            if not self.store.reports_root(): return
+        try:
+            preview = import_workpaper(self.store, path)
+            if preview["conflicts"]:
+                details = "\n".join(f"{entry['item']}: keep {entry['winner']} (newest timestamp)" for entry in preview["conflicts"][:30])
+                answer = QMessageBox.question(self, "Workpaper conflicts",
+                    f"{len(preview['conflicts'])} saved item(s) differ:\n{details}\n\nImport and apply the newer decisions?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                    QMessageBox.StandardButton.Cancel)
+                if answer != QMessageBox.StandardButton.Yes: return
+                preview = import_workpaper(self.store, path, accept_newer=True)
+            project = preview["project_id"]
+            company, year = self.store.project_info(project)
+        except Exception as exc: return QMessageBox.warning(self, "Import failed", str(exc))
+        if company not in self.companies:
+            self.companies.append(company); self.company.addItem(company)
+        self.company.setCurrentText(company); self.year.setCurrentText(year)
+        self.project_id = project; self.after_open(company, year)
+        self.statusBar().showMessage(f"Imported workpaper: {company}, FY {year}", 8000)
+
     # ---- workpapers and reports ----------------------------------------
     def open_project(self):
-        if self.ocr_running: return QMessageBox.information(self, "OCR in progress", "Wait for OCR to finish before changing workpapers.")
-        if not self.confirm_unsaved(): return
         company = self.company.currentText(); year = self.year.currentText()
+        if self.ocr_running:
+            self.pending_selection = (company, year)
+            self.statusBar().showMessage(f"Pending workpaper: {company}, FY {year}; opens after OCR finishes.")
+            return
         if company not in self.companies:
-            return QMessageBox.warning(self, "Company required", "Choose a company from the workbook roster.")
+            return
+        if (company, year) == (self.active_company, self.active_year): return
+        if not self.confirm_unsaved(): return
         self.project_id = self.store.project(company, year)
         self.after_open(company, year)
 
@@ -1448,6 +1545,11 @@ class Workbench(QMainWindow):
         self.ocr_selected_button.setEnabled(bool(self.ocr_tasks))
         self.cancel_ocr_button.hide()
         self.ocr_worker = None
+        if self.pending_selection:
+            company, year = self.pending_selection
+            self.pending_selection = None
+            self.company.setCurrentText(company); self.year.setCurrentText(year)
+            self.open_project()
 
     def check_for_score(self):
         if self.busy: return
