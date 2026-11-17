@@ -6,6 +6,14 @@ Verdant is a local Windows desktop workbench for reviewing company PDF disclosur
 
 Double-click `run.cmd`, or run `app.py` with the project Python environment. The application opens with a fresh local database in `data/`.
 
+## Windows testing ZIP
+
+Unzip the complete `Verdant_Disclosure_Scorer` folder to a writable location such as `Documents` or `Desktop`, then run `Verdant_Disclosure_Scorer.exe` inside it. Do not put the extracted folder under `Program Files`; Verdant saves local workpapers next to the application. If Windows SmartScreen warns about an unsigned test build, choose **More info > Run anyway** only if the ZIP came from the expected project owner.
+
+The first-run setup asks for a reports folder, scorer name, and optional roster workbook. PDF paths are saved relative to the chosen reports folder when possible. Use **Workpaper > Relink missing PDF** if reports move. Keep the PDFs and `data/` folder together in your backups. `data/verdant.db` holds decisions, evidence, OCR text, and audit history; `data/roster.xlsx` is an imported roster. Copy both while Verdant is closed. A `.verdant` export moves one company-year workpaper between machines; it contains report references and OCR text, but not PDF binaries.
+
+**Find leads** offers rule-based passages for review. It does not assign confirmed points. Each Found (1) decision needs a document, PDF page, and excerpt. In the Workpaper menu, choose **Scorer name and evidence page setting** to select PDF or printed page references for exports. The master workbook export creates a new file; it does not modify the supplied consolidated workbook.
+
 ## Project layout
 
 ```

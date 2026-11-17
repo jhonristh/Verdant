@@ -1366,7 +1366,8 @@ class Workbench(QMainWindow):
         intro = QLabel("Choose a reports folder and scorer name. You can change these later from Workpaper.")
         intro.setWordWrap(True); layout.addWidget(intro)
         layout.addWidget(QLabel("Reports folder"))
-        reports = QLineEdit(); reports.setText(self.store.setting("reports_root", "")); layout.addWidget(reports)
+        default_reports = Path.home() / "Documents"
+        reports = QLineEdit(); reports.setText(self.store.setting("reports_root", str(default_reports if default_reports.is_dir() else Path.home()))); layout.addWidget(reports)
         layout.addWidget(self.button("Browse reports folder", lambda: reports.setText(
             QFileDialog.getExistingDirectory(dialog, "Choose reports folder", reports.text()))))
         layout.addWidget(QLabel("Scorer name"))

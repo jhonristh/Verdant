@@ -10,7 +10,7 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[],
+    excludes=['PySide6.QtQuick', 'PySide6.QtQml', 'PySide6.QtVirtualKeyboard', 'numpy', 'psutil', 'yaml', 'PIL'],
     noarchive=False,
     optimize=0,
 )

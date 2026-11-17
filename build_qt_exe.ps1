@@ -1,6 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location $PSScriptRoot
-& ".\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --noconsole --onedir --name Verdant_Disclosure_Scorer --icon "resources\brand_mark.ico" --hidden-import PySide6.QtPdf --hidden-import PySide6.QtPdfWidgets --add-data "resources;resources" app.py
+& ".\.venv\Scripts\python.exe" -m PyInstaller --noconfirm --clean --noconsole --onedir --name Verdant_Disclosure_Scorer --icon "resources\brand_mark.ico" --hidden-import PySide6.QtPdf --hidden-import PySide6.QtPdfWidgets --exclude-module PySide6.QtQuick --exclude-module PySide6.QtQml --exclude-module PySide6.QtVirtualKeyboard --exclude-module numpy --exclude-module psutil --exclude-module yaml --exclude-module PIL --add-data "resources;resources" app.py
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller build failed" }
 $internal = Join-Path $PSScriptRoot 'dist\Verdant_Disclosure_Scorer\_internal'
 # Use the Qt wheel's matching VC runtime beside Python's bundled DLLs.
@@ -14,3 +14,5 @@ foreach ($name in @('VCRUNTIME140.dll', 'VCRUNTIME140_1.dll')) {
 # Windows ICU API by unversioned names, so that copy must not shadow System32.
 $conflictingIcu = Join-Path $internal 'icuuc.dll'
 if (Test-Path -LiteralPath $conflictingIcu) { Remove-Item -LiteralPath $conflictingIcu }
+$optional = Join-Path $internal 'PySide6\opengl32sw.dll'
+if (Test-Path -LiteralPath $optional) { Remove-Item -LiteralPath $optional }
