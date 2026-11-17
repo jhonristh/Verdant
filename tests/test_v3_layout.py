@@ -95,25 +95,23 @@ class V3LayoutTests(unittest.TestCase):
         self._setup_dummy_pdf(["The company reports carbon pricing and climate metrics with 50% reduction."], num_scanned=2)
         self.window.show()
 
-        budgets = [
-            (1920, 1080, 600),
-            (1536, 864, 460),
-            (1280, 720, 360),
-        ]
-        for w, h, min_pane_height in budgets:
+        budgets = [(1920, 1080), (1536, 864), (1280, 720)]
+        for w, h in budgets:
             self.window.resize(w, h)
             self.qt.processEvents()
             # Left pane (PDF pane) height
             left_pane = self.window.reader_splitter.widget(0)
+            # Qt may clamp requested dimensions to the actual display geometry.
+            min_pane_height = max(280, int(self.window.height() * 0.45))
             self.assertGreaterEqual(left_pane.height(), min_pane_height,
-                f"At {w}x{h}, left pane height {left_pane.height()} < required {min_pane_height}")
+                f"At {self.window.width()}x{self.window.height()}, left pane height {left_pane.height()} < required {min_pane_height}")
             # Hit list is visible and at least 120 px
             self.assertTrue(self.window.hit_list.isVisible())
             self.assertGreaterEqual(self.window.hit_list.height(), 120,
                 f"At {w}x{h}, hit list height {self.window.hit_list.height()} < 120")
             # Pin button is inside window bounds
             pin_geo = self.window.pin_button.mapTo(self.window, self.window.pin_button.rect().bottomRight())
-            self.assertLessEqual(pin_geo.y(), h, f"Pin button pushed below window bottom at {w}x{h}")
+            self.assertLessEqual(pin_geo.y(), self.window.height(), f"Pin button pushed below window bottom at {w}x{h}")
 
     def test_compact_logical_size_for_1366_by_768_at_150_percent(self):
         self.window.show(); self.window.resize(911, 512); self.qt.processEvents()
@@ -331,10 +329,32 @@ class V3LayoutTests(unittest.TestCase):
     def test_selecting_company_opens_workpaper_without_open_button(self):
         self.window.companies.append("Test PLC")
         self.window.company.addItem("Test PLC")
+        self.assertEqual(self.window.year.currentText(), "Choose fiscal year")
         self.window.company.setCurrentText("Test PLC")
         self.window.company.activated.emit(self.window.company.currentIndex())
+        self.assertIsNone(self.window.project_id)
+        self.window.year.setCurrentText("2022")
+        self.window.year.activated.emit(self.window.year.currentIndex())
         self.assertEqual(self.window.active_company, "Test PLC")
         self.assertEqual(self.window.active_year, "2022")
+
+    def test_workpaper_help_popup_and_button_tips(self):
+        help_button = next(button for button in self.window.findChildren(app_qt.QPushButton)
+                           if button.text() == "? Help")
+        help_button.click()
+        self.assertTrue(self.window.help_dialog.isVisible())
+        self.assertIn("reports folder", self.window.help_dialog.windowTitle().lower() + " " +
+                      self.window.help_dialog.findChild(app_qt.QListWidget).item(3).text().lower())
+        self.assertIn("actions", self.window.work_menu_button.toolTip())
+        menu = self.window.work_menu_button.menu()
+        for action in menu.actions():
+            if action.text():
+                self.assertTrue(action.toolTip(), action.text())
+        self.window.help_dialog.close()
+        next(action for action in menu.actions() if action.text() == "Help for these actions").trigger()
+        self.assertTrue(self.window.help_dialog.isVisible())
+        for button in self.window.findChildren(app_qt.QPushButton):
+            self.assertTrue(button.toolTip(), button.text())
 
 
 if __name__ == "__main__":

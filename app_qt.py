@@ -111,6 +111,60 @@ ARROW = "\u25b8 "
 GAP = "\u00a0\u00a0 "
 MARKS = {"supported": "\u25cf", "unsupported": "\u2212", "open": "\u25cb"}
 
+WORKPAPER_HELP = {
+    "Choose company and fiscal year": "Show the selectors. Choose both fields to open a company-year workpaper.",
+    "Saved workspaces": "Open a previously saved company-year workpaper.",
+    "Add PDFs": "Attach report PDFs to the current workpaper. The original files stay in place.",
+    "Choose reports folder": "Set the folder used to resolve portable report paths.",
+    "Relink missing PDF": "Locate a moved report and verify it by hash or filename.",
+    "Import roster...": "Load company names from the Companies sheet of an XLSX workbook.",
+    "Scorer name and evidence page setting": "Set the scorer name and choose PDF or printed pages for exports.",
+    "Export workpaper (.verdant)": "Share this company-year's decisions, audit and OCR text without PDF binaries.",
+    "Import workpaper (.verdant)": "Merge a shared workpaper after reviewing any decision conflicts.",
+    "Find leads": "Search reports for rule-based evidence leads; only saved review decisions count as scores.",
+    "Mark items with no hits as Not found": "Confirm bulk Not found decisions for unreviewed items with no extracted-text hits.",
+    "Export Excel": "Export this workpaper's decisions as a long Scores sheet.",
+    "Export for master workbook": "Create a new workbook aligned with the consolidated master layout.",
+    "Help for these actions": "Open a popup explaining each workpaper action and button.",
+}
+
+BUTTON_HELP = {
+    "Workspaces": WORKPAPER_HELP["Saved workspaces"],
+    "Add PDFs": WORKPAPER_HELP["Add PDFs"],
+    "Find leads": WORKPAPER_HELP["Find leads"],
+    "Previous match": "Go to the previous find result (wraps to the last result).",
+    "Next match": "Go to the next find result; F3 does the same.",
+    "◀ Prev": "Show the previous PDF page.",
+    "Next ▶": "Show the next PDF page.",
+    "Go": "Jump to the PDF page number entered beside this button.",
+    "−": "Zoom out on the PDF page.",
+    "+": "Zoom in on the PDF page.",
+    "Fit width": "Fit the PDF page to the reader width.",
+    "Fit page": "Fit the full PDF page in the reader.",
+    "OCR current": "Recognize text on the current image-only PDF page.",
+    "OCR all missing": "Recognize text on all pages flagged as image-only.",
+    "OCR selected pages": "Choose specific image-only PDF pages for OCR.",
+    "Cancel OCR": "Stop OCR after the current page; completed pages stay available.",
+    "Review pages": "Open the PDF reader to inspect the matching pages.",
+    "Pin selected passage": "Copy the selected passage and its PDF page into the decision form.",
+    "Checklist and decisions": "Open the checklist and decision form for the selected item.",
+    "Hide manual review": "Show or hide the manual decision controls.",
+    "Use lead": "Fill the decision form with the best lead; inspect the source before saving.",
+    "Save and next": "Save this decision and move to the next unreviewed item (Alt+Right).",
+    "Next with a lead": "Jump to the next unreviewed item that has a lead.",
+    "Score summary": "Open a detailed list of rule-based leads and saved decisions.",
+    "Expand all": "Expand every score group.",
+    "Collapse all": "Collapse every score group.",
+    "Open selected": "Open the selected saved workpaper.",
+    "Delete selected": "Delete the selected saved workpaper after confirmation.",
+    "Cancel task": "Request cancellation of the background import or lead search.",
+    "Browse reports folder": "Choose the main folder containing company PDF reports.",
+    "Browse roster": "Choose an XLSX roster with a Companies sheet.",
+    "Continue": "Save first-run setup and open the workbench.",
+    "? Help": "Open the button guide and read what each control does.",
+    "Close": "Close this popup.",
+}
+
 
 def make_items():
     items = [{**item, "kind":"ESG", "weight":1} for item in RUBRIC["esg"]]
@@ -302,11 +356,39 @@ class Workbench(QMainWindow):
     def button(self, text, callback, primary=False):
         button = QPushButton(text)
         button.clicked.connect(callback)
+        help_text = BUTTON_HELP.get(text, "Open the score overview." if text.startswith("Reviewed ") else f"Use {text}.")
+        button.setToolTip(help_text)
+        button.setAccessibleDescription(help_text)
         if primary:
             button.setObjectName("primary")
         else:
             button.setFocusPolicy(Qt.FocusPolicy.TabFocus)
         return button
+
+    def show_help(self):
+        previous = getattr(self, "help_dialog", None)
+        if previous: previous.close()
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Verdant button guide")
+        dialog.resize(740, 510)
+        outer = QVBoxLayout(dialog)
+        intro = QLabel("Select a control to see what it does. Hover over any button for the same short tip.")
+        intro.setWordWrap(True); outer.addWidget(intro)
+        row = QHBoxLayout(); listing = QListWidget(); detail = QLabel()
+        detail.setWordWrap(True); detail.setAlignment(Qt.AlignmentFlag.AlignTop)
+        detail.setMinimumWidth(300)
+        entries = {**WORKPAPER_HELP, **BUTTON_HELP,
+                   "Choose fiscal year": "Select the fiscal year covered by the report. No year is preselected.",
+                   "Find scope": "Search this PDF, all attached PDFs, or the checklist with the shared find bar."}
+        for name, description in entries.items():
+            item = QListWidgetItem(name); item.setData(Qt.ItemDataRole.UserRole, description)
+            listing.addItem(item)
+        listing.currentItemChanged.connect(lambda item, *_: detail.setText(item.data(Qt.ItemDataRole.UserRole) if item else ""))
+        listing.setCurrentRow(0)
+        row.addWidget(listing, 2); row.addWidget(detail, 3); outer.addLayout(row)
+        outer.addWidget(self.button("Close", dialog.close))
+        self.help_dialog = dialog
+        dialog.show()
 
     def progress_dialog(self, title, label, maximum):
         dialog = QProgressDialog(label, "Cancel", 0, maximum, self)
@@ -351,12 +433,20 @@ class Workbench(QMainWindow):
         work_menu.addAction("Mark items with no hits as Not found", self.bulk_mark_no_hits)
         work_menu.addSeparator(); work_menu.addAction("Export Excel", self.export_excel)
         work_menu.addAction("Export for master workbook", self.export_for_master_workbook)
+        work_menu.addSeparator(); work_menu.addAction("Help for these actions", self.show_help)
+        work_menu.setToolTipsVisible(True)
+        for action in work_menu.actions():
+            if action.text() in WORKPAPER_HELP:
+                action.setToolTip(WORKPAPER_HELP[action.text()])
+                action.setStatusTip(WORKPAPER_HELP[action.text()])
 
         self.work_menu_button = QToolButton()
         self.work_menu_button.setText("Workpaper ▾")
         self.work_menu_button.setMenu(work_menu)
         self.work_menu_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        self.work_menu_button.setToolTip("Open workpaper actions. Hover over an action for its purpose.")
         head.addWidget(self.work_menu_button)
+        head.addWidget(self.button("? Help", self.show_help))
 
         self.status_chip = QLabel("No workpaper"); self.status_chip.setObjectName("chip")
         self.status_chip.setProperty("state", "none"); head.addWidget(self.status_chip)
@@ -366,8 +456,9 @@ class Workbench(QMainWindow):
         controls = self.panel(); row = QHBoxLayout(controls); row.setContentsMargins(12, 8, 12, 8); row.setSpacing(8)
         self.company = QComboBox(); self.company.addItem("Select a company"); self.company.addItems(self.companies)
         self.company.setMinimumWidth(260); self.company.setAccessibleName("Company"); row.addWidget(self.company, 3)
-        self.year = QComboBox(); self.year.addItems(["2022", "2023", "2024", "2025"]); self.year.setAccessibleName("Fiscal year covered")
-        self.year.setToolTip("Fiscal year covered by the report, not the publication year"); row.addWidget(self.year, 1)
+        self.year = QComboBox(); self.year.addItem("Choose fiscal year"); self.year.addItems(["2022", "2023", "2024", "2025"])
+        self.year.setAccessibleName("Fiscal year covered")
+        self.year.setToolTip("Choose the fiscal year covered by the report. No year is selected by default."); row.addWidget(self.year, 1)
         row.addWidget(self.button("Workspaces", self.open_saved))
         row.addWidget(self.button("Add PDFs", self.import_pdfs_background))
         row.addWidget(self.button("Find leads", self.find_leads_background))
@@ -436,9 +527,9 @@ class Workbench(QMainWindow):
         empty = QWidget(); el = QVBoxLayout(empty); el.setAlignment(Qt.AlignmentFlag.AlignCenter); el.setSpacing(12)
         self.empty_title = QLabel("Open a workpaper to begin"); self.empty_title.setObjectName("empty")
         self.empty_title.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_body = QLabel("Choose a company and fiscal year, then open its workpaper."); self.empty_body.setObjectName("muted")
+        self.empty_body = QLabel("Choose a company and fiscal year to open its workpaper."); self.empty_body.setObjectName("muted")
         self.empty_body.setAlignment(Qt.AlignmentFlag.AlignCenter); self.empty_body.setWordWrap(True)
-        self.empty_action = self.button("Add PDFs", self.import_pdfs, True)
+        self.empty_action = self.button("Add PDFs", self.import_pdfs_background, True)
         el.addWidget(self.empty_title); el.addWidget(self.empty_body); el.addWidget(self.empty_action, 0, Qt.AlignmentFlag.AlignCenter)
         self.center_stack.addWidget(empty)  # index 0
 
@@ -470,6 +561,7 @@ class Workbench(QMainWindow):
         warn_row.addWidget(self.ocr_progress_bar, 1)
 
         self.warning_toggle = QPushButton("Details ▾")
+        self.warning_toggle.setToolTip("Show or hide OCR status and pages that still need text recognition.")
         self.warning_toggle.setObjectName("toolBtn")
         self.warning_toggle.setCheckable(True)
         self.warning_toggle.setFocusPolicy(Qt.FocusPolicy.TabFocus)
@@ -887,7 +979,7 @@ class Workbench(QMainWindow):
     def refresh_center(self):
         if not self.project_id:
             self.empty_title.setText("Open a workpaper to begin")
-            self.empty_body.setText("Choose a company and fiscal year, then open its workpaper.")
+            self.empty_body.setText("Choose a company and fiscal year to open its workpaper.")
             self.empty_action.hide(); self.center_stack.setCurrentIndex(0)
         elif not self.docs:
             self.empty_title.setText("Import PDFs to begin")
@@ -1430,6 +1522,9 @@ class Workbench(QMainWindow):
             self.statusBar().showMessage(f"Pending workpaper: {company}, FY {year}; opens after the current task finishes.")
             return
         if company not in self.companies:
+            return
+        if year not in {"2022", "2023", "2024", "2025"}:
+            self.statusBar().showMessage("Choose a fiscal year to open this company workpaper.", 6000)
             return
         if (company, year) == (self.active_company, self.active_year): return
         if not self.confirm_unsaved(): return
